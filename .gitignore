@@ -15,6 +15,8 @@ ClipsForInference/*
 !ClipsForInference/.gitkeep
 Output/*
 !Output/.gitkeep
+Ignored*/*
+!Ignored*/.gitkeep
 .ipynb_checkpoints/
 .DS_Store
 
