@@ -139,16 +139,6 @@ class GreenFormer(nn.Module):
         # We use features_only=True, which wraps it in FeatureGetterNet
         print(f"Initializing {encoder_name} (img_size={img_size})...")
         self.encoder = timm.create_model(encoder_name, pretrained=False, features_only=True, img_size=img_size)
-        
-        # ENABLE GRADIENT CHECKPOINTING
-        # This is critical for 2048x2048 training
-        try:
-            self.encoder.model.set_grad_checkpointing(True)
-            print("Gradient Checkpointing Enabled.")
-        except Exception as e:
-            print(f"Warning: Could not enable Gradient Checkpointing: {e}")
-        
-        # 2. Pretrained Weights (SKIPPED)
         # We skip downloading/loading base weights because the user's checkpoint 
         # (loaded immediately after this) contains all weights, including correctly 
         # trained/sized PosEmbeds. This keeps the project offline-capable using only local assets.
@@ -255,11 +245,8 @@ class GreenFormer(nn.Module):
         # We give the refiner 'Probs' as input features because they are normalized [0,1]
         rgb = x[:, :3, :, :]
         
-        # CRITICAL STABILITY FIX: Detach Coarse Preds
-        # We prevent the Refiner from back-propagating to the Backbone via the input.
-        # This stops them from entering an "Adversarial Feedback Loop".
-        # The Refiner must simply fix what the Backbone gives it.
-        coarse_pred = torch.cat([alpha_coarse, fg_coarse], dim=1).detach() # [B, 4, H, W]
+        # Feed the Refiner
+        coarse_pred = torch.cat([alpha_coarse, fg_coarse], dim=1) # [B, 4, H, W]
         
         # Refiner outputs DELTA LOGITS
         # The refiner predicts the correction in valid score space (-inf, inf)
@@ -282,18 +269,8 @@ class GreenFormer(nn.Module):
         fg_final = torch.sigmoid(fg_final_logits)
         
         return {
-            'alpha': alpha_final,      # Loss computes on this (Refined)
-            'fg': fg_final,            # Loss computes on this (Refined)
-            'alpha_coarse': alpha_coarse,
-            'fg_coarse': fg_coarse,
-            'delta_alpha': delta_alpha,
-            'delta_fg': delta_fg
+            'alpha': alpha_final,
+            'fg': fg_final
         }
 
-    @torch.no_grad()
-    def predict_fine(self, x):
-        """
-        Alias for forward() since we now run full-res refinement in a single pass.
-        Kept for compatibility with inference scripts.
-        """
-        return self.forward(x)
+

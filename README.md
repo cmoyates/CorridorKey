@@ -8,6 +8,12 @@ You input a raw green screen frame, and the neural network completely separates 
 
 No more fighting with garbage mattes or agonizing over "core" vs "edge" keys. Give CorridorKey a hint of what you want, and it separates the light for you.
 
+## Alert!
+
+This is a brand new release, I'm sure you will discover many ways it can be improved! I invite everyone to help. Join us on the "Corridor Creates" Discord to share ideas, work, forks, etc! https://discord.gg/zvwUrdWXJm
+
+Also, if you are a novice at using python scripts much like I was, consider downloading a smart IDE like Antigravity (from google, it's free), downloading this repository, and then asking Antigravity to help you get up and running. I even made a LLM Handover doc in the docs/ directory
+
 ## Features
 
 *   **Physically Accurate Unmixing:** Clean extraction of straight color foreground and linear alpha channels, preserving hair, motion blur, and translucency.
