@@ -210,27 +210,30 @@ Transfer overhead is negligible (~1.2ms out of ~598ms). The bottleneck is 100% m
 
 ---
 
-## Phase 6 — Vision-Specific: channels_last
+## Phase 6 — Vision-Specific: channels_last (COMPLETE — REJECTED)
 
 **Hypothesis:** `channels_last` memory format may improve CNN refiner and decoder conv performance on MPS.
 
-### Experiment
+**Result:** No latency improvement. Refiner is too small a fraction of total inference time. Full-model `channels_last` is slightly slower (-0.30%) due to Hiera attention format conversion overhead. **Not adopted.**
 
-1. Convert model to channels_last: `model = model.to(memory_format=torch.channels_last)`
-2. Convert input tensor: `inp_t = inp_t.to(memory_format=torch.channels_last)`
-3. Verify output correctness
-4. Benchmark latency and memory
+### Benchmark Results (1024x1024, 10 iterations, fp16 autocast)
 
-### Risk
+| Config | Median (s) | P95 (s) | FPS | Peak Mem (MB) | Delta |
+|---|---|---|---|---|---|
+| baseline | 0.5976 | 0.6038 | 1.67 | 3345.9 | — |
+| refiner_only | 0.5978 | 0.5994 | 1.67 | 2233.9 | -0.03% |
+| full_model | 0.5994 | 0.6012 | 1.67 | 2241.9 | -0.30% |
 
-- Hiera ViT backbone may not propagate channels_last cleanly through attention ops
-- Mixed format conversions could add overhead
-- Test at model default size (2048) and smaller (512, 1024)
+### Parity
 
-### Accept Criteria
+| Config | Status | Alpha Diff | FG Diff |
+|---|---|---|---|
+| refiner_only | PASS | 0.000000 | 0.000000 |
+| full_model | PASS | 0.000488 | 0.000488 |
 
-- Keep only if >5% latency improvement at 2048x2048
-- Revert if parity fails or memory increases significantly
+### Key Finding
+
+Hiera backbone dominates compute (~80%+). CNN refiner is too small to move the needle with memory format changes alone. Future optimization must target the backbone (torch.compile) or the full pipeline.
 
 ---
 
