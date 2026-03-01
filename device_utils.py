@@ -40,27 +40,22 @@ def resolve_device(requested: str | None = None) -> str:
 
     device = device.lower()
     if device not in VALID_DEVICES:
-        raise RuntimeError(
-            f"Unknown device '{device}'. Valid options: {', '.join(VALID_DEVICES)}"
-        )
+        raise RuntimeError(f"Unknown device '{device}'. Valid options: {', '.join(VALID_DEVICES)}")
 
     # Validate the explicit request
     if device == "cuda":
         if not torch.cuda.is_available():
             raise RuntimeError(
-                "CUDA requested but torch.cuda.is_available() is False. "
-                "Install a CUDA-enabled PyTorch build."
+                "CUDA requested but torch.cuda.is_available() is False. Install a CUDA-enabled PyTorch build."
             )
     elif device == "mps":
         if not hasattr(torch.backends, "mps"):
             raise RuntimeError(
-                "MPS requested but this PyTorch build has no MPS support. "
-                "Install PyTorch >= 1.12 with MPS backend."
+                "MPS requested but this PyTorch build has no MPS support. Install PyTorch >= 1.12 with MPS backend."
             )
         if not torch.backends.mps.is_available():
             raise RuntimeError(
-                "MPS requested but not available on this machine. "
-                "Requires Apple Silicon (M1+) with macOS 12.3+."
+                "MPS requested but not available on this machine. Requires Apple Silicon (M1+) with macOS 12.3+."
             )
 
     return device
