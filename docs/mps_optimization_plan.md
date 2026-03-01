@@ -270,26 +270,15 @@ Hiera backbone dominates compute (~80%+). CNN refiner is too small to move the n
 
 ---
 
-## Phase 8 — Unsupported Ops & Fallback Detection
+## Phase 8 — Unsupported Ops & Fallback Detection (COMPLETE — NO ACTION NEEDED)
 
 **Hypothesis:** Some ops may silently fall back to CPU via `PYTORCH_ENABLE_MPS_FALLBACK`. Need to identify and substitute.
 
-### Method
+**Result:** All ops run natively on MPS. Zero fallback warnings with `PYTORCH_ENABLE_MPS_FALLBACK=1`. All 13 tested op categories (interpolate, SDPA, GroupNorm, BatchNorm, dilated Conv2d, etc.) confirmed MPS-native. See `docs/phase8_results.md` for full profiler breakdown.
 
-1. Run with `PYTORCH_ENABLE_MPS_FALLBACK=1` and capture warnings
-2. Profile with `torch.profiler` to identify CPU-dispatched ops
-3. Check known MPS-unsupported ops against ops used:
-   - `F.interpolate(mode='bilinear')` — should be supported
-   - `F.interpolate(mode='bicubic')` — used in pos_embed resize (load-time only)
-   - `torch.sigmoid` — supported
-   - `torch.cat`, `torch.where` — supported
-   - GroupNorm, BatchNorm — check MPS support
-   - `max_pool2d` with large kernels — check limits
+### Key Finding
 
-### Accept Criteria
-
-- Substitute any hot-path op that falls back to CPU
-- Leave load-time-only ops (pos_embed resize) on CPU — no perf impact
+PyTorch 2.9.1 MPS backend fully supports every op used by GreenFormer. The profiler confirms SDPA runs via dedicated `_scaled_dot_product_attention_math_for_mps` Metal kernel. No substitutions needed.
 
 ---
 
@@ -340,7 +329,7 @@ Only if earlier phases reveal an unexplained bottleneck.
 | 5 | 5 | `non_blocking=True` input transfer | +1-3% | Low |
 | ~~6~~ | ~~7~~ | ~~torch.compile on refiner~~ | ~~-311% regression~~ | ~~Rejected~~ |
 | 7 | 4 | bfloat16 experiment | Unknown | Medium |
-| 8 | 8 | Unsupported op substitution | Varies | Low |
+| ~~8~~ | ~~8~~ | ~~Unsupported op substitution~~ | ~~All ops native~~ | ~~None needed~~ |
 
 ---
 
