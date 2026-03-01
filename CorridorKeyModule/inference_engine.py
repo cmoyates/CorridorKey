@@ -145,7 +145,7 @@ class CorridorKeyEngine:
 
         # 4. Prepare Tensor
         inp_np = np.concatenate([img_norm, mask_resized], axis=-1)  # [H, W, 4]
-        inp_t = torch.from_numpy(inp_np.transpose((2, 0, 1))).float().unsqueeze(0).to(self.device)
+        inp_t = torch.from_numpy(inp_np.transpose((2, 0, 1))).float().unsqueeze(0).to(self.device, non_blocking=True)
 
         # 5. Inference
         # Hook for Refiner Scaling
