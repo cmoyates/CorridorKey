@@ -44,3 +44,6 @@ VideoMaMaInferenceModule/checkpoints/*
 !VideoMaMaInferenceModule/checkpoints/.gitkeep
 gvm_core/weights/*
 !gvm_core/weights/.gitkeep
+
+# Benchmark output
+scripts/benchmark_results.json
