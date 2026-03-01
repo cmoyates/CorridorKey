@@ -140,16 +140,13 @@ class ClipEntry:
                 self.alpha_asset = ClipAsset(target_alpha_dir, "sequence")
                 if self.alpha_asset.frame_count == 0:
                     # Fallback: check for video file inside the AlphaHint directory
-                    video_candidates = [
-                        f for f in os.listdir(target_alpha_dir) if is_video_file(f)
-                    ]
+                    video_candidates = [f for f in os.listdir(target_alpha_dir) if is_video_file(f)]
                     if video_candidates:
-                        self.alpha_asset = ClipAsset(
-                            os.path.join(target_alpha_dir, video_candidates[0]), "video"
-                        )
+                        self.alpha_asset = ClipAsset(os.path.join(target_alpha_dir, video_candidates[0]), "video")
                     else:
                         logging.warning(
-                            f"Clip '{self.name}': AlphaHint directory has no valid image or video files. Marking for generation."
+                            f"Clip '{self.name}': AlphaHint directory has no valid image or video files."
+                            " Marking for generation."
                         )
                         self.alpha_asset = None
         else:
@@ -619,7 +616,8 @@ def run_inference(clips, device=None):
 
         num_frames = min(clip.input_asset.frame_count, clip.alpha_asset.frame_count)
         logger.info(
-            f"  Input frames: {clip.input_asset.frame_count}, Alpha frames: {clip.alpha_asset.frame_count} -> Processing {num_frames} frames"
+            f"  Input frames: {clip.input_asset.frame_count},"
+            f" Alpha frames: {clip.alpha_asset.frame_count} -> Processing {num_frames} frames"
         )
 
         if num_frames == 0:
