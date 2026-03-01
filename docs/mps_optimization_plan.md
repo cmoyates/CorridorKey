@@ -237,30 +237,36 @@ Hiera backbone dominates compute (~80%+). CNN refiner is too small to move the n
 
 ---
 
-## Phase 7 — torch.compile (Strictly Gated)
+## Phase 7 — torch.compile (COMPLETE — REJECTED)
 
 **Hypothesis:** `torch.compile` on MPS may help the CNN refiner (regular conv pattern) but likely struggles with the Hiera backbone (dynamic shapes, attention).
 
-### Experiment Plan
+**Result:** torch.compile is not viable on MPS in PyTorch 2.9. Refiner-only compile runs ~4x slower with parity failure. Full-model compile crashes due to PyTorch bug in MPS SDPA meta registration. **Not adopted.** See `docs/phase7_results.md` for full results.
 
-1. Baseline: eager mode (current)
-2. `torch.compile(model.refiner)` only — smallest meaningful unit
-3. `torch.compile(model)` full — if refiner works
-4. Test with `mode="reduce-overhead"` and `mode="default"`
-5. Check for graph breaks, correctness, compilation time
+### Benchmark Results (1024x1024, 10 iterations, fp16 autocast)
 
-### Risk Matrix
+| Config | Median (s) | P95 (s) | FPS | Compile (s) | Delta |
+|---|---|---|---|---|---|
+| eager (baseline) | 0.6053 | 0.6074 | 1.65 | — | — |
+| refiner_default | 2.4908 | 2.6841 | 0.40 | 6.06 | -311% |
+| refiner_reduce_overhead | 2.7127 | 2.7171 | 0.37 | 3.47 | -348% |
+| full_default | FAILED | — | — | — | crash |
+| full_reduce_overhead | FAILED | — | — | — | crash |
 
-| Target | Risk | Notes |
-|---|---|---|
-| Full model | High | Hiera + timm + attention = many graph breaks likely |
-| Refiner only | Medium | Pure CNN, static shapes — best candidate |
-| Decoder heads | Medium | MLP + interpolate — may break on interpolate |
+### Parity
 
-### Accept Criteria
+| Config | Status | Alpha Diff | FG Diff |
+|---|---|---|---|
+| refiner_default | FAIL | 0.009766 | 0.012207 |
+| refiner_reduce_overhead | FAIL | 0.009766 | 0.012207 |
+| full_default | ERROR (crash) | — | — |
+| full_reduce_overhead | ERROR (crash) | — | — |
 
-- Keep compiled refiner only if: steady-state latency improves >10%, correctness within atol=1e-3, no NaN
-- Reject full-model compile if any graph breaks or regressions
+### Key Findings
+
+- Refiner compile: inductor overhead makes MPS ~4x slower for small CNN
+- Full model: PyTorch 2.9 bug in `sdpa_vector_fast_mps` crashes on Hiera's 5D attention tensors
+- No configuration meets accept criteria (>10% improvement + atol=1e-3)
 
 ---
 
@@ -332,7 +338,7 @@ Only if earlier phases reveal an unexplained bottleneck.
 | 3 | 3 | MPS memory instrumentation | Visibility | None |
 | 4 | 6 | channels_last experiment | +5-15% if it works | Medium |
 | 5 | 5 | `non_blocking=True` input transfer | +1-3% | Low |
-| 6 | 7 | torch.compile on refiner | +10-20% if stable | High |
+| ~~6~~ | ~~7~~ | ~~torch.compile on refiner~~ | ~~-311% regression~~ | ~~Rejected~~ |
 | 7 | 4 | bfloat16 experiment | Unknown | Medium |
 | 8 | 8 | Unsupported op substitution | Varies | Low |
 

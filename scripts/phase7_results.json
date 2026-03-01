@@ -1,0 +1,137 @@
+{
+  "phase7_compile": [
+    {
+      "config": "eager",
+      "compile_target": null,
+      "compile_mode": null,
+      "status": "ok",
+      "device": "mps",
+      "img_size": 1024,
+      "iterations": 10,
+      "compile_time_sec": 0.0,
+      "graph_breaks": 0,
+      "latency_median_sec": 0.6053,
+      "latency_p95_sec": 0.6074,
+      "throughput_fps": 1.65,
+      "peak_memory_mb": 3345.9,
+      "memory_after_warmup_mb": 372.3,
+      "all_latencies_sec": [
+        0.6072,
+        0.6069,
+        0.6074,
+        0.6052,
+        0.6046,
+        0.6091,
+        0.6043,
+        0.6053,
+        0.6032,
+        0.604
+      ],
+      "delta_vs_eager_pct": 0.0
+    },
+    {
+      "config": "refiner_default",
+      "compile_target": "refiner",
+      "compile_mode": "default",
+      "status": "ok",
+      "device": "mps",
+      "img_size": 1024,
+      "iterations": 10,
+      "compile_time_sec": 6.06,
+      "graph_breaks": 0,
+      "latency_median_sec": 2.4908,
+      "latency_p95_sec": 2.6841,
+      "throughput_fps": 0.4,
+      "peak_memory_mb": 3249.9,
+      "memory_after_warmup_mb": 404.3,
+      "all_latencies_sec": [
+        2.4481,
+        2.4393,
+        2.4496,
+        2.4443,
+        2.4574,
+        2.5241,
+        2.5978,
+        2.6524,
+        2.6841,
+        2.7042
+      ],
+      "delta_vs_eager_pct": -311.5
+    },
+    {
+      "config": "refiner_reduce_overhead",
+      "compile_target": "refiner",
+      "compile_mode": "reduce-overhead",
+      "status": "ok",
+      "device": "mps",
+      "img_size": 1024,
+      "iterations": 10,
+      "compile_time_sec": 3.47,
+      "graph_breaks": 0,
+      "latency_median_sec": 2.7127,
+      "latency_p95_sec": 2.7171,
+      "throughput_fps": 0.37,
+      "peak_memory_mb": 3257.9,
+      "memory_after_warmup_mb": 400.3,
+      "all_latencies_sec": [
+        2.7075,
+        2.7128,
+        2.7167,
+        2.7157,
+        2.7094,
+        2.7171,
+        2.7173,
+        2.7125,
+        2.7034,
+        2.7037
+      ],
+      "delta_vs_eager_pct": -348.16
+    },
+    {
+      "config": "full_default",
+      "compile_target": "full",
+      "compile_mode": "default",
+      "status": "forward_failed",
+      "error": "Dynamo failed to run FX node with fake tensors: call_function <built-in function scaled_dot_product_attention>(*(FakeTensor(..., device='mps:0', size=(1, 2, 1024, 64, 56), dtype=torch.float16), FakeTensor(..., device='mps:0', size=(1, 2, 1024, 64, 56), dtype=torch.float16), FakeTensor(..., device='mps:0', size=(1, 2, 1024, 64, 56), dtype=torch.float16)), **{}): got TypeError('can only concatenate list (not \"torch.Size\") to list')\n\nfrom user code:\n   File \"/Users/cristopheryates/Documents/Projects/Python/CorridorKey/CorridorKeyModule/core/model_transformer.py\", line 237, in forward\n    features = self.encoder(x)  # Returns list of features\n  File \"/Users/cristopheryates/Documents/Projects/Python/CorridorKey/.venv/lib/python3.12/site-packages/timm/models/_features.py\", line 476, in forward\n    features = self.model.forward_intermediates(\n  File \"/Users/cristopheryates/Documents/Projects/Python/CorridorKey/.venv/lib/python3.12/site-packages/timm/models/hiera.py\", line 751, in forward_intermediates\n    x = blk(x)\n  File \"/Users/cristopheryates/Documents/Projects/Python/CorridorKey/.venv/lib/python3.12/site-packages/timm/models/hiera.py\", line 388, in forward\n    x = x + self.drop_path1(self.ls1(self.attn(x_norm)))\n  File \"/Users/cristopheryates/Documents/Projects/Python/CorridorKey/.venv/lib/python3.12/site-packages/timm/models/hiera.py\", line 312, in forward\n    x = F.scaled_dot_product_attention(q, k, v)\n\nSet TORCHDYNAMO_VERBOSE=1 for the internal stack trace (please do this especially if you're reporting a bug to PyTorch). For even more developer context, set TORCH_LOGS=\"+dynamo\"\n",
+      "delta_vs_eager_pct": 0.0
+    },
+    {
+      "config": "full_reduce_overhead",
+      "compile_target": "full",
+      "compile_mode": "reduce-overhead",
+      "status": "forward_failed",
+      "error": "Dynamo failed to run FX node with fake tensors: call_function <built-in function scaled_dot_product_attention>(*(FakeTensor(..., device='mps:0', size=(1, 2, 1024, 64, 56), dtype=torch.float16), FakeTensor(..., device='mps:0', size=(1, 2, 1024, 64, 56), dtype=torch.float16), FakeTensor(..., device='mps:0', size=(1, 2, 1024, 64, 56), dtype=torch.float16)), **{}): got TypeError('can only concatenate list (not \"torch.Size\") to list')\n\nfrom user code:\n   File \"/Users/cristopheryates/Documents/Projects/Python/CorridorKey/CorridorKeyModule/core/model_transformer.py\", line 237, in forward\n    features = self.encoder(x)  # Returns list of features\n  File \"/Users/cristopheryates/Documents/Projects/Python/CorridorKey/.venv/lib/python3.12/site-packages/timm/models/_features.py\", line 476, in forward\n    features = self.model.forward_intermediates(\n  File \"/Users/cristopheryates/Documents/Projects/Python/CorridorKey/.venv/lib/python3.12/site-packages/timm/models/hiera.py\", line 751, in forward_intermediates\n    x = blk(x)\n  File \"/Users/cristopheryates/Documents/Projects/Python/CorridorKey/.venv/lib/python3.12/site-packages/timm/models/hiera.py\", line 388, in forward\n    x = x + self.drop_path1(self.ls1(self.attn(x_norm)))\n  File \"/Users/cristopheryates/Documents/Projects/Python/CorridorKey/.venv/lib/python3.12/site-packages/timm/models/hiera.py\", line 312, in forward\n    x = F.scaled_dot_product_attention(q, k, v)\n\nSet TORCHDYNAMO_VERBOSE=1 for the internal stack trace (please do this especially if you're reporting a bug to PyTorch). For even more developer context, set TORCH_LOGS=\"+dynamo\"\n",
+      "delta_vs_eager_pct": 0.0
+    }
+  ],
+  "phase7_parity": [
+    {
+      "config": "refiner_default",
+      "status": "FAIL",
+      "alpha_max_diff": 0.009766,
+      "fg_max_diff": 0.012207,
+      "alpha_close": false,
+      "fg_close": false,
+      "has_nan": false
+    },
+    {
+      "config": "refiner_reduce_overhead",
+      "status": "FAIL",
+      "alpha_max_diff": 0.009766,
+      "fg_max_diff": 0.012207,
+      "alpha_close": false,
+      "fg_close": false,
+      "has_nan": false
+    },
+    {
+      "config": "full_default",
+      "status": "ERROR",
+      "error": "Dynamo failed to run FX node with fake tensors: call_function <built-in function scaled_dot_product_attention>(*(FakeTensor(..., device='mps:0', size=(1, 2, 1024, 64, 56), dtype=torch.float16), FakeTensor(..., device='mps:0', size=(1, 2, 1024, 64, 56), dtype=torch.float16), FakeTensor(..., device='mps:0', size=(1, 2, 1024, 64, 56), dtype=torch.float16)), **{}): got TypeError('can only concatenate list (not \"torch.Size\") to list')\n\nfrom user code:\n   File \"/Users/cristopheryates/Documents/Projects/Python/CorridorKey/CorridorKeyModule/core/model_transformer.py\", line 237, in forward\n    features = self.encoder(x)  # Returns list of features\n  File \"/Users/cristopheryates/Documents/Projects/Python/CorridorKey/.venv/lib/python3.12/site-packages/timm/models/_features.py\", line 476, in forward\n    features = self.model.forward_intermediates(\n  File \"/Users/cristopheryates/Documents/Projects/Python/CorridorKey/.venv/lib/python3.12/site-packages/timm/models/hiera.py\", line 751, in forward_intermediates\n    x = blk(x)\n  File \"/Users/cristopheryates/Documents/Projects/Python/CorridorKey/.venv/lib/python3.12/site-packages/timm/models/hiera.py\", line 388, in forward\n    x = x + self.drop_path1(self.ls1(self.attn(x_norm)))\n  File \"/Users/cristopheryates/Documents/Projects/Python/CorridorKey/.venv/lib/python3.12/site-packages/timm/models/hiera.py\", line 312, in forward\n    x = F.scaled_dot_product_attention(q, k, v)\n\nSet TORCHDYNAMO_VERBOSE=1 for the internal stack trace (please do this especially if you're reporting a bug to PyTorch). For even more developer context, set TORCH_LOGS=\"+dynamo\"\n"
+    },
+    {
+      "config": "full_reduce_overhead",
+      "status": "ERROR",
+      "error": "Dynamo failed to run FX node with fake tensors: call_function <built-in function scaled_dot_product_attention>(*(FakeTensor(..., device='mps:0', size=(1, 2, 1024, 64, 56), dtype=torch.float16), FakeTensor(..., device='mps:0', size=(1, 2, 1024, 64, 56), dtype=torch.float16), FakeTensor(..., device='mps:0', size=(1, 2, 1024, 64, 56), dtype=torch.float16)), **{}): got TypeError('can only concatenate list (not \"torch.Size\") to list')\n\nfrom user code:\n   File \"/Users/cristopheryates/Documents/Projects/Python/CorridorKey/CorridorKeyModule/core/model_transformer.py\", line 237, in forward\n    features = self.encoder(x)  # Returns list of features\n  File \"/Users/cristopheryates/Documents/Projects/Python/CorridorKey/.venv/lib/python3.12/site-packages/timm/models/_features.py\", line 476, in forward\n    features = self.model.forward_intermediates(\n  File \"/Users/cristopheryates/Documents/Projects/Python/CorridorKey/.venv/lib/python3.12/site-packages/timm/models/hiera.py\", line 751, in forward_intermediates\n    x = blk(x)\n  File \"/Users/cristopheryates/Documents/Projects/Python/CorridorKey/.venv/lib/python3.12/site-packages/timm/models/hiera.py\", line 388, in forward\n    x = x + self.drop_path1(self.ls1(self.attn(x_norm)))\n  File \"/Users/cristopheryates/Documents/Projects/Python/CorridorKey/.venv/lib/python3.12/site-packages/timm/models/hiera.py\", line 312, in forward\n    x = F.scaled_dot_product_attention(q, k, v)\n\nSet TORCHDYNAMO_VERBOSE=1 for the internal stack trace (please do this especially if you're reporting a bug to PyTorch). For even more developer context, set TORCH_LOGS=\"+dynamo\"\n"
+    }
+  ]
+}

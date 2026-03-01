@@ -10,6 +10,7 @@ Usage:
     python scripts/benchmark_mps.py --all              # full matrix: cpu fp32, mps fp32/fp16/bf16
     python scripts/benchmark_mps.py --phase4           # Phase 4 dtype audit: fp32 no-autocast, fp16, bf16 + parity
     python scripts/benchmark_mps.py --no-autocast      # disable autocast for true fp32 baseline
+    python scripts/benchmark_mps.py --phase7           # Phase 7 torch.compile: eager vs refiner-only vs full-model
 """
 
 from __future__ import annotations
@@ -604,6 +605,282 @@ def run_channels_last_parity(
 
 
 # ---------------------------------------------------------------------------
+# Phase 7: torch.compile benchmark
+# ---------------------------------------------------------------------------
+
+COMPILE_CONFIGS = [
+    # (label, compile_target, compile_mode)
+    ("eager", None, None),
+    ("refiner_default", "refiner", "default"),
+    ("refiner_reduce_overhead", "refiner", "reduce-overhead"),
+    ("full_default", "full", "default"),
+    ("full_reduce_overhead", "full", "reduce-overhead"),
+]
+
+
+def _apply_compile(model: GreenFormer, target: str | None, mode: str | None) -> GreenFormer:
+    """Apply torch.compile to model component. Returns model (may be replaced)."""
+    if target is None:
+        return model  # eager baseline
+    if target == "refiner":
+        if model.refiner is not None:
+            model.refiner = torch.compile(model.refiner, mode=mode)
+        return model
+    if target == "full":
+        return torch.compile(model, mode=mode)
+    raise ValueError(f"Unknown compile target: {target}")
+
+
+def _count_graph_breaks(
+    model: GreenFormer,
+    inp: torch.Tensor,
+    device: torch.device,
+    autocast_dtype: torch.dtype,
+) -> int:
+    """Run one forward pass with dynamo logging to count graph breaks."""
+    import logging
+
+    graph_break_count = 0
+    original_level = logging.getLogger("torch._dynamo").level
+
+    class GraphBreakCounter(logging.Handler):
+        def emit(self, record):
+            nonlocal graph_break_count
+            if "graph break" in record.getMessage().lower():
+                graph_break_count += 1
+
+    handler = GraphBreakCounter()
+    dynamo_logger = logging.getLogger("torch._dynamo")
+    dynamo_logger.addHandler(handler)
+    dynamo_logger.setLevel(logging.DEBUG)
+
+    try:
+        with torch.inference_mode(), torch.autocast(device_type=device.type, dtype=autocast_dtype):
+            _ = model(inp)
+        _sync(device)
+    finally:
+        dynamo_logger.removeHandler(handler)
+        dynamo_logger.setLevel(original_level)
+
+    return graph_break_count
+
+
+def run_compile_benchmark(
+    device_str: str,
+    img_size: int,
+    iterations: int,
+    verbose: bool = False,
+) -> list[dict]:
+    """Benchmark torch.compile: eager vs refiner-only vs full model."""
+    device = torch.device(device_str)
+    autocast_dtype = torch.float16
+    all_results = []
+
+    for label, compile_target, compile_mode in COMPILE_CONFIGS:
+        print(f"\n{'=' * 60}")
+        print(f"Phase 7 torch.compile: config={label}  device={device_str}  "
+              f"img_size={img_size}  iters={iterations}")
+        print(f"{'=' * 60}")
+
+        # Fresh model each config
+        model, load_time = _build_model(device, img_size)
+
+        # Compilation
+        compile_time = 0.0
+        graph_breaks = 0
+        if compile_target is not None:
+            print(f"Compiling ({compile_target}, mode={compile_mode})...")
+            t0 = time.perf_counter()
+            try:
+                model = _apply_compile(model, compile_target, compile_mode)
+            except Exception as exc:
+                print(f"  COMPILE FAILED: {exc}")
+                all_results.append({
+                    "config": label,
+                    "compile_target": compile_target,
+                    "compile_mode": compile_mode,
+                    "status": "compile_failed",
+                    "error": str(exc),
+                })
+                continue
+
+            # First forward triggers actual compilation
+            inp_warmup = _make_input(device, img_size, torch.float32)
+            try:
+                with torch.inference_mode(), torch.autocast(device_type=device.type, dtype=autocast_dtype):
+                    _ = model(inp_warmup)
+                _sync(device)
+            except Exception as exc:
+                print(f"  FIRST FORWARD FAILED: {exc}")
+                all_results.append({
+                    "config": label,
+                    "compile_target": compile_target,
+                    "compile_mode": compile_mode,
+                    "status": "forward_failed",
+                    "error": str(exc),
+                })
+                continue
+
+            compile_time = time.perf_counter() - t0
+            print(f"  Compilation time: {compile_time:.2f}s")
+
+            # Count graph breaks (rebuild model for clean detection)
+            try:
+                model_for_breaks, _ = _build_model(device, img_size)
+                model_for_breaks = _apply_compile(model_for_breaks, compile_target, compile_mode)
+                torch._dynamo.reset()
+                graph_breaks = _count_graph_breaks(
+                    model_for_breaks, inp_warmup, device, autocast_dtype
+                )
+                print(f"  Graph breaks: {graph_breaks}")
+                del model_for_breaks
+                clear_device_cache(device)
+            except Exception as exc:
+                print(f"  Graph break detection failed: {exc}")
+                graph_breaks = -1
+
+        # Prepare input
+        inp = _make_input(device, img_size, torch.float32)
+
+        # Warmup
+        print(f"Warmup ({WARMUP_ITERATIONS} iterations)...")
+        for _ in range(WARMUP_ITERATIONS):
+            with torch.inference_mode(), torch.autocast(device_type=device.type, dtype=autocast_dtype):
+                _ = model(inp)
+            _sync(device)
+
+        snap_after_warmup = memory_snapshot(device)
+
+        # Measured iterations
+        latencies: list[float] = []
+        print(f"Measuring ({iterations} iterations)...")
+        for i in range(iterations):
+            _sync(device)
+            t0 = time.perf_counter()
+            with torch.inference_mode(), torch.autocast(device_type=device.type, dtype=autocast_dtype):
+                _ = model(inp)
+            _sync(device)
+            elapsed = time.perf_counter() - t0
+            latencies.append(elapsed)
+            if verbose:
+                print(f"  iter {i}: {elapsed:.4f}s")
+
+        clear_device_cache(device)
+        peak_snap = memory_snapshot(device)
+
+        median_lat = statistics.median(latencies)
+        p95_idx = max(0, int(len(latencies) * 0.95) - 1)
+        p95_lat = sorted(latencies)[p95_idx]
+        throughput = 1.0 / median_lat if median_lat > 0 else 0.0
+
+        result = {
+            "config": label,
+            "compile_target": compile_target,
+            "compile_mode": compile_mode,
+            "status": "ok",
+            "device": device_str,
+            "img_size": img_size,
+            "iterations": iterations,
+            "compile_time_sec": round(compile_time, 2),
+            "graph_breaks": graph_breaks,
+            "latency_median_sec": round(median_lat, 4),
+            "latency_p95_sec": round(p95_lat, 4),
+            "throughput_fps": round(throughput, 2),
+            "peak_memory_mb": round(peak_snap["driver_alloc_mb"], 1) if peak_snap["driver_alloc_mb"] else None,
+            "memory_after_warmup_mb": round(snap_after_warmup["current_alloc_mb"], 1) if snap_after_warmup["current_alloc_mb"] else None,
+            "all_latencies_sec": [round(lat, 4) for lat in latencies],
+        }
+
+        print(f"  Median: {median_lat:.4f}s  P95: {p95_lat:.4f}s  FPS: {throughput:.2f}  "
+              f"Compile: {compile_time:.2f}s  Breaks: {graph_breaks}  "
+              f"Peak: {result['peak_memory_mb'] or 'N/A'} MB")
+
+        all_results.append(result)
+
+    # Compute deltas vs eager baseline
+    eager_results = [r for r in all_results if r["config"] == "eager" and r.get("status") == "ok"]
+    eager_median = eager_results[0]["latency_median_sec"] if eager_results else 0
+    for r in all_results:
+        if r.get("status") == "ok" and eager_median > 0:
+            delta = ((eager_median - r["latency_median_sec"]) / eager_median) * 100
+            r["delta_vs_eager_pct"] = round(delta, 2)
+        else:
+            r["delta_vs_eager_pct"] = 0.0
+
+    return all_results
+
+
+def run_compile_parity(
+    device_str: str,
+    img_size: int,
+) -> list[dict]:
+    """Verify compiled models produce same outputs as eager baseline."""
+    device = torch.device(device_str)
+    autocast_dtype = torch.float16
+    all_parity = []
+
+    # Build eager reference
+    model_ref, _ = _build_model(device, img_size)
+
+    gen = torch.Generator(device="cpu")
+    gen.manual_seed(42)
+    inp_cpu = torch.randn(1, INPUT_CHANNELS, img_size, img_size, generator=gen)
+    inp = inp_cpu.to(device)
+
+    with torch.inference_mode(), torch.autocast(device_type=device.type, dtype=autocast_dtype):
+        ref_out = model_ref(inp)
+    _sync(device)
+    ref_alpha = ref_out["alpha"].float().cpu()
+    ref_fg = ref_out["fg"].float().cpu()
+
+    # Test each compile config (skip eager)
+    for label, compile_target, compile_mode in COMPILE_CONFIGS[1:]:
+        print(f"\nParity check: {label} vs eager")
+        import copy
+        model_test = copy.deepcopy(model_ref)
+        try:
+            model_test = _apply_compile(model_test, compile_target, compile_mode)
+
+            with torch.inference_mode(), torch.autocast(device_type=device.type, dtype=autocast_dtype):
+                test_out = model_test(inp)
+            _sync(device)
+            test_alpha = test_out["alpha"].float().cpu()
+            test_fg = test_out["fg"].float().cpu()
+
+            alpha_max_diff = (ref_alpha - test_alpha).abs().max().item()
+            fg_max_diff = (ref_fg - test_fg).abs().max().item()
+            alpha_close = torch.allclose(ref_alpha, test_alpha, atol=PARITY_ATOL, rtol=PARITY_RTOL)
+            fg_close = torch.allclose(ref_fg, test_fg, atol=PARITY_ATOL, rtol=PARITY_RTOL)
+            has_nan = torch.isnan(test_alpha).any().item() or torch.isnan(test_fg).any().item()
+
+            status = "PASS" if (alpha_close and fg_close and not has_nan) else "FAIL"
+            print(f"  {label}: {status}  alpha_diff={alpha_max_diff:.6f}  "
+                  f"fg_diff={fg_max_diff:.6f}  NaN={has_nan}")
+
+            all_parity.append({
+                "config": label,
+                "status": status,
+                "alpha_max_diff": round(alpha_max_diff, 6),
+                "fg_max_diff": round(fg_max_diff, 6),
+                "alpha_close": alpha_close,
+                "fg_close": fg_close,
+                "has_nan": has_nan,
+            })
+        except Exception as exc:
+            print(f"  {label}: ERROR — {exc}")
+            all_parity.append({
+                "config": label,
+                "status": "ERROR",
+                "error": str(exc),
+            })
+
+        del model_test
+        clear_device_cache(device)
+
+    return all_parity
+
+
+# ---------------------------------------------------------------------------
 # Markdown report
 # ---------------------------------------------------------------------------
 
@@ -659,6 +936,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--phase4", action="store_true", help="Phase 4 dtype audit: fp32 no-autocast, fp16, bf16 + parity")
     parser.add_argument("--phase5", action="store_true", help="Phase 5 memory-traffic: non_blocking transfer + cpu().numpy() cost")
     parser.add_argument("--phase6", action="store_true", help="Phase 6 channels_last: refiner-only vs full model vs baseline")
+    parser.add_argument("--phase7", action="store_true", help="Phase 7 torch.compile: eager vs refiner-only vs full-model")
     parser.add_argument("--verbose", action="store_true", help="Per-iteration memory logging")
     parser.add_argument("--output", type=str, default=None, help="Write JSON results to file")
     return parser.parse_args()
@@ -689,7 +967,65 @@ def main() -> None:
             print(f"SKIPPED {dev}/{dt}: {exc}")
             return None
 
-    if args.phase6:
+    if args.phase7:
+        # Phase 7: torch.compile experiment
+        if not _mps_available():
+            print("ERROR: Phase 7 requires MPS device")
+            sys.exit(1)
+
+        compile_results = run_compile_benchmark(
+            "mps", args.img_size, args.iterations, verbose=args.verbose
+        )
+        compile_parity = run_compile_parity("mps", args.img_size)
+
+        # Markdown report
+        report_lines = ["# Phase 7: torch.compile Results\n"]
+        report_lines.append(f"**Device:** mps  **Size:** {args.img_size}  **Iters:** {args.iterations}\n")
+        report_lines.append("## Latency\n")
+        report_lines.append("| Config | Median (s) | P95 (s) | FPS | Peak Mem (MB) | Compile (s) | Graph Breaks | Delta |")
+        report_lines.append("|--------|-----------|---------|-----|---------------|-------------|-------------|-------|")
+        for r in compile_results:
+            if r.get("status") != "ok":
+                report_lines.append(
+                    f"| {r['config']} | — | — | — | — | — | — | {r.get('status', 'error')}: {r.get('error', '')[:50]} |"
+                )
+                continue
+            delta = r.get("delta_vs_eager_pct", 0)
+            peak = r.get("peak_memory_mb") or "N/A"
+            report_lines.append(
+                f"| {r['config']} | {r['latency_median_sec']} | {r['latency_p95_sec']} | "
+                f"{r['throughput_fps']} | {peak} | {r['compile_time_sec']} | "
+                f"{r['graph_breaks']} | {delta:+.2f}% |"
+            )
+        report_lines.append("")
+        report_lines.append("## Parity (vs eager)\n")
+        report_lines.append("| Config | Status | Alpha Diff | FG Diff | NaN |")
+        report_lines.append("|--------|--------|-----------|---------|-----|")
+        for p in compile_parity:
+            if p.get("status") == "ERROR":
+                report_lines.append(f"| {p['config']} | ERROR | — | — | — |")
+                continue
+            report_lines.append(
+                f"| {p['config']} | {p['status']} | {p.get('alpha_max_diff', 'N/A')} | "
+                f"{p.get('fg_max_diff', 'N/A')} | {p.get('has_nan', 'N/A')} |"
+            )
+        report_lines.append("")
+
+        report = "\n".join(report_lines)
+        print(f"\n{report}")
+
+        output_data = {"phase7_compile": compile_results, "phase7_parity": compile_parity}
+        if args.output:
+            output_path = Path(args.output)
+            output_path.write_text(json.dumps(output_data, indent=2))
+            print(f"Results written to {output_path}")
+        else:
+            default_path = PROJECT_ROOT / "scripts" / "phase7_results.json"
+            default_path.write_text(json.dumps(output_data, indent=2))
+            print(f"Results written to {default_path}")
+        return
+
+    elif args.phase6:
         # Phase 6: channels_last experiment
         if not _mps_available():
             print("ERROR: Phase 6 requires MPS device")
