@@ -1,3 +1,5 @@
+> **Superseded by [OPTIMIZATION_REPORT.md](../OPTIMIZATION_REPORT.md).** This file is a historical artifact from the initial 10-phase audit.
+
 # MPS Optimization Results — CorridorKey
 
 *Completed: 2026-03-01*
