@@ -855,7 +855,7 @@ class VideoInferencePipeline:
             weight_dtype (torch.dtype): The precision for model weights (float16 or bfloat16).
         """
         print("--- Initializing Inference Pipeline and Loading Models ---")
-        self.device = torch.device(device if torch.cuda.is_available() else "cpu")
+        self.device = torch.device(device)
         self.weight_dtype = weight_dtype
 
         # Load models from pretrained paths

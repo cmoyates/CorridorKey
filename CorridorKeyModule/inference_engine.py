@@ -79,7 +79,7 @@ class CorridorKeyEngine:
 
         return model
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def process_frame(
         self,
         image,
