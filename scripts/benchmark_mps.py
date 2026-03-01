@@ -441,6 +441,169 @@ def run_transfer_benchmark(
 
 
 # ---------------------------------------------------------------------------
+# Phase 6: channels_last benchmark
+# ---------------------------------------------------------------------------
+
+CHANNELS_LAST_CONFIGS = ["baseline", "refiner_only", "full_model"]
+
+
+def _apply_channels_last(model: GreenFormer, config: str) -> None:
+    """Apply channels_last memory format to model components."""
+    if config == "refiner_only":
+        if model.refiner is not None:
+            model.refiner = model.refiner.to(memory_format=torch.channels_last)
+    elif config == "full_model":
+        model = model.to(memory_format=torch.channels_last)
+    # "baseline" — no changes
+
+
+def run_channels_last_benchmark(
+    device_str: str,
+    img_size: int,
+    iterations: int,
+    verbose: bool = False,
+) -> list[dict]:
+    """Benchmark channels_last: baseline vs refiner-only vs full model."""
+    device = torch.device(device_str)
+    all_results = []
+
+    for config in CHANNELS_LAST_CONFIGS:
+        print(f"\n{'=' * 60}")
+        print(f"Phase 6 channels_last: config={config}  device={device_str}  "
+              f"img_size={img_size}  iters={iterations}")
+        print(f"{'=' * 60}")
+
+        # Fresh model each config to avoid format contamination
+        model, load_time = _build_model(device, img_size)
+
+        # Apply channels_last
+        _apply_channels_last(model, config)
+
+        # Prepare input
+        inp = _make_input(device, img_size, torch.float32)
+        if config == "full_model":
+            inp = inp.to(memory_format=torch.channels_last)
+
+        # Warmup
+        print(f"Warmup ({WARMUP_ITERATIONS} iterations)...")
+        for _ in range(WARMUP_ITERATIONS):
+            with torch.inference_mode(), torch.autocast(device_type=device.type, dtype=torch.float16):
+                _ = model(inp)
+            _sync(device)
+
+        snap_after_warmup = memory_snapshot(device)
+
+        # Measured iterations
+        latencies: list[float] = []
+        print(f"Measuring ({iterations} iterations)...")
+        for i in range(iterations):
+            _sync(device)
+            t0 = time.perf_counter()
+            with torch.inference_mode(), torch.autocast(device_type=device.type, dtype=torch.float16):
+                _ = model(inp)
+            _sync(device)
+            elapsed = time.perf_counter() - t0
+            latencies.append(elapsed)
+            if verbose:
+                print(f"  iter {i}: {elapsed:.4f}s")
+
+        clear_device_cache(device)
+        peak_snap = memory_snapshot(device)
+
+        median_lat = statistics.median(latencies)
+        p95_idx = max(0, int(len(latencies) * 0.95) - 1)
+        p95_lat = sorted(latencies)[p95_idx]
+        throughput = 1.0 / median_lat if median_lat > 0 else 0.0
+
+        result = {
+            "config": config,
+            "device": device_str,
+            "img_size": img_size,
+            "iterations": iterations,
+            "latency_median_sec": round(median_lat, 4),
+            "latency_p95_sec": round(p95_lat, 4),
+            "throughput_fps": round(throughput, 2),
+            "peak_memory_mb": round(peak_snap["driver_alloc_mb"], 1) if peak_snap["driver_alloc_mb"] else None,
+            "memory_after_warmup_mb": round(snap_after_warmup["current_alloc_mb"], 1) if snap_after_warmup["current_alloc_mb"] else None,
+            "all_latencies_sec": [round(lat, 4) for lat in latencies],
+        }
+
+        print(f"  Median: {median_lat:.4f}s  P95: {p95_lat:.4f}s  FPS: {throughput:.2f}  "
+              f"Peak: {result['peak_memory_mb'] or 'N/A'} MB")
+
+        all_results.append(result)
+
+    # Compute deltas vs baseline
+    baseline_median = all_results[0]["latency_median_sec"]
+    for r in all_results:
+        if baseline_median > 0:
+            delta = ((baseline_median - r["latency_median_sec"]) / baseline_median) * 100
+            r["delta_vs_baseline_pct"] = round(delta, 2)
+        else:
+            r["delta_vs_baseline_pct"] = 0.0
+
+    return all_results
+
+
+def run_channels_last_parity(
+    device_str: str,
+    img_size: int,
+) -> list[dict]:
+    """Verify channels_last produces identical outputs to baseline."""
+    device = torch.device(device_str)
+    all_parity = []
+
+    # Build reference model (baseline, no channels_last)
+    model_ref, _ = _build_model(device, img_size)
+
+    gen = torch.Generator(device="cpu")
+    gen.manual_seed(42)
+    inp_cpu = torch.randn(1, INPUT_CHANNELS, img_size, img_size, generator=gen)
+    inp = inp_cpu.to(device)
+
+    with torch.inference_mode(), torch.autocast(device_type=device.type, dtype=torch.float16):
+        ref_out = model_ref(inp)
+    _sync(device)
+    ref_alpha = ref_out["alpha"].float().cpu()
+    ref_fg = ref_out["fg"].float().cpu()
+
+    for config in CHANNELS_LAST_CONFIGS[1:]:  # skip baseline
+        print(f"\nParity check: {config} vs baseline")
+        import copy
+        model_test = copy.deepcopy(model_ref)
+        _apply_channels_last(model_test, config)
+
+        test_inp = inp.clone()
+        if config == "full_model":
+            test_inp = test_inp.to(memory_format=torch.channels_last)
+
+        with torch.inference_mode(), torch.autocast(device_type=device.type, dtype=torch.float16):
+            test_out = model_test(test_inp)
+        _sync(device)
+        test_alpha = test_out["alpha"].float().cpu()
+        test_fg = test_out["fg"].float().cpu()
+
+        alpha_max_diff = (ref_alpha - test_alpha).abs().max().item()
+        fg_max_diff = (ref_fg - test_fg).abs().max().item()
+        alpha_close = torch.allclose(ref_alpha, test_alpha, atol=PARITY_ATOL, rtol=PARITY_RTOL)
+        fg_close = torch.allclose(ref_fg, test_fg, atol=PARITY_ATOL, rtol=PARITY_RTOL)
+
+        status = "PASS" if (alpha_close and fg_close) else "FAIL"
+        print(f"  {config}: {status}  alpha_diff={alpha_max_diff:.6f}  fg_diff={fg_max_diff:.6f}")
+
+        all_parity.append({
+            "config": config,
+            "status": status,
+            "alpha_max_diff": round(alpha_max_diff, 6),
+            "fg_max_diff": round(fg_max_diff, 6),
+            "alpha_close": alpha_close,
+            "fg_close": fg_close,
+        })
+
+    return all_parity
+
+
+# ---------------------------------------------------------------------------
 # Markdown report
 # ---------------------------------------------------------------------------
 
@@ -495,6 +658,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--all", action="store_true", help="Run full benchmark matrix")
     parser.add_argument("--phase4", action="store_true", help="Phase 4 dtype audit: fp32 no-autocast, fp16, bf16 + parity")
     parser.add_argument("--phase5", action="store_true", help="Phase 5 memory-traffic: non_blocking transfer + cpu().numpy() cost")
+    parser.add_argument("--phase6", action="store_true", help="Phase 6 channels_last: refiner-only vs full model vs baseline")
     parser.add_argument("--verbose", action="store_true", help="Per-iteration memory logging")
     parser.add_argument("--output", type=str, default=None, help="Write JSON results to file")
     return parser.parse_args()
@@ -525,7 +689,55 @@ def main() -> None:
             print(f"SKIPPED {dev}/{dt}: {exc}")
             return None
 
-    if args.phase5:
+    if args.phase6:
+        # Phase 6: channels_last experiment
+        if not _mps_available():
+            print("ERROR: Phase 6 requires MPS device")
+            sys.exit(1)
+
+        cl_results = run_channels_last_benchmark(
+            "mps", args.img_size, args.iterations, verbose=args.verbose
+        )
+        cl_parity = run_channels_last_parity("mps", args.img_size)
+
+        # Markdown report
+        report_lines = ["# Phase 6: channels_last Results\n"]
+        report_lines.append(f"**Device:** mps  **Size:** {args.img_size}  **Iters:** {args.iterations}\n")
+        report_lines.append("## Latency\n")
+        report_lines.append("| Config | Median (s) | P95 (s) | FPS | Peak Mem (MB) | Delta |")
+        report_lines.append("|--------|-----------|---------|-----|---------------|-------|")
+        for r in cl_results:
+            delta = r.get("delta_vs_baseline_pct", 0)
+            peak = r.get("peak_memory_mb") or "N/A"
+            report_lines.append(
+                f"| {r['config']} | {r['latency_median_sec']} | {r['latency_p95_sec']} | "
+                f"{r['throughput_fps']} | {peak} | {delta:+.2f}% |"
+            )
+        report_lines.append("")
+        report_lines.append("## Parity (vs baseline)\n")
+        report_lines.append("| Config | Status | Alpha Diff | FG Diff |")
+        report_lines.append("|--------|--------|-----------|---------|")
+        for p in cl_parity:
+            report_lines.append(
+                f"| {p['config']} | {p['status']} | {p['alpha_max_diff']:.6f} | {p['fg_max_diff']:.6f} |"
+            )
+        report_lines.append("")
+
+        report = "\n".join(report_lines)
+        print(f"\n{report}")
+
+        output_data = {"phase6_channels_last": cl_results, "phase6_parity": cl_parity}
+        if args.output:
+            output_path = Path(args.output)
+            output_path.write_text(json.dumps(output_data, indent=2))
+            print(f"Results written to {output_path}")
+        else:
+            default_path = PROJECT_ROOT / "scripts" / "phase6_results.json"
+            default_path.write_text(json.dumps(output_data, indent=2))
+            print(f"Results written to {default_path}")
+        return
+
+    elif args.phase5:
         # Phase 5: memory-traffic / non_blocking transfer benchmark
         if not _mps_available():
             print("ERROR: Phase 5 requires MPS device")

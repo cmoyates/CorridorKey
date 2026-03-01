@@ -1,0 +1,94 @@
+{
+  "phase6_channels_last": [
+    {
+      "config": "baseline",
+      "device": "mps",
+      "img_size": 1024,
+      "iterations": 10,
+      "latency_median_sec": 0.5976,
+      "latency_p95_sec": 0.6038,
+      "throughput_fps": 1.67,
+      "peak_memory_mb": 3345.9,
+      "memory_after_warmup_mb": 372.3,
+      "all_latencies_sec": [
+        0.6134,
+        0.6038,
+        0.5958,
+        0.5953,
+        0.5972,
+        0.5963,
+        0.5958,
+        0.5981,
+        0.5999,
+        0.5981
+      ],
+      "delta_vs_baseline_pct": 0.0
+    },
+    {
+      "config": "refiner_only",
+      "device": "mps",
+      "img_size": 1024,
+      "iterations": 10,
+      "latency_median_sec": 0.5978,
+      "latency_p95_sec": 0.5994,
+      "throughput_fps": 1.67,
+      "peak_memory_mb": 2233.9,
+      "memory_after_warmup_mb": 384.3,
+      "all_latencies_sec": [
+        0.5989,
+        0.597,
+        0.5962,
+        0.5968,
+        0.5975,
+        0.5981,
+        0.5994,
+        0.5984,
+        0.6021,
+        0.5975
+      ],
+      "delta_vs_baseline_pct": -0.03
+    },
+    {
+      "config": "full_model",
+      "device": "mps",
+      "img_size": 1024,
+      "iterations": 10,
+      "latency_median_sec": 0.5994,
+      "latency_p95_sec": 0.6012,
+      "throughput_fps": 1.67,
+      "peak_memory_mb": 2241.9,
+      "memory_after_warmup_mb": 384.3,
+      "all_latencies_sec": [
+        0.5975,
+        0.6028,
+        0.5995,
+        0.5979,
+        0.6002,
+        0.5989,
+        0.5988,
+        0.6,
+        0.5993,
+        0.6012
+      ],
+      "delta_vs_baseline_pct": -0.3
+    }
+  ],
+  "phase6_parity": [
+    {
+      "config": "refiner_only",
+      "status": "PASS",
+      "alpha_max_diff": 0.0,
+      "fg_max_diff": 0.0,
+      "alpha_close": true,
+      "fg_close": true
+    },
+    {
+      "config": "full_model",
+      "status": "PASS",
+      "alpha_max_diff": 0.000488,
+      "fg_max_diff": 0.000488,
+      "alpha_close": true,
+      "fg_close": true
+    }
+  ]
+}
