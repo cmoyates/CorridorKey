@@ -16,7 +16,7 @@ No more fighting with garbage mattes or agonizing over "core" vs "edge" keys. Gi
 
 This is a brand new release, I'm sure you will discover many ways it can be improved! I invite everyone to help. Join us on the "Corridor Creates" Discord to share ideas, work, forks, etc! https://discord.gg/zvwUrdWXJm
 
-Also, if you are a novice at using python scripts much like I was, consider downloading a smart IDE like Antigravity (from google, it's free), downloading this repository, and then asking Antigravity to help you get up and running. I even made a LLM Handover doc in the docs/ directory.
+Also, if you are a novice at using python scripts much like I was, consider downloading a smart IDE like Antigravity (from google, it's free), downloading this repository, and then asking Antigravity to help you get up and running. I even made a LLM Handover doc in the docs/ directory. This project uses [uv](https://docs.astral.sh/uv/) to manage dependencies — it handles Python installation, virtual environments, and packages all in one step, so you don't need to worry about any of that.
 
 Naturally, I have not tested everything. If you encounter errors, please consider patching the code as needed and submitting a pull request.
 
@@ -41,30 +41,31 @@ Because GVM and VideoMaMa have huge model file sizes and extreme hardware requir
 
 ### 1. Installation
 
+This project uses **[uv](https://docs.astral.sh/uv/)** to manage Python and all dependencies. uv is a fast, modern replacement for pip that automatically handles Python versions, virtual environments, and package installation in a single step. You do **not** need to install Python yourself — uv does it for you.
+
 **For Windows Users (Automated):**
 1.  Clone or download this repository to your local machine.
-2.  Ensure you have Python 3.10+ installed.
-3.  Double-click `Install_CorridorKey_Windows.bat`. This will automatically set up your python environment, install requirements, and download the CorridorKey model.
-4.  (Optional) Double-click `Install_GVM_Windows.bat` and `Install_VideoMaMa_Windows.bat` to automatically download the heavy optional Alpha Hint generators.
+2.  Double-click `Install_CorridorKey_Windows.bat`. This will automatically install uv (if needed), set up your Python environment, install all dependencies, and download the CorridorKey model.
+    > **Note:** If this is the first time installing uv, any terminal windows you already had open won't see it. The installer script handles the current window automatically, but if you open a new terminal and get "'uv' is not recognized", just close and reopen that terminal.
+3.  (Optional) Double-click `Install_GVM_Windows.bat` and `Install_VideoMaMa_Windows.bat` to download the heavy optional Alpha Hint generator weights.
 
-**For Linux / Mac Users (Manual Setup):**
+**For Linux / Mac Users:**
 1.  Clone or download this repository to your local machine.
-2.  Ensure you have Python 3.10+ installed.
-3.  Set up a virtual environment and install the requirements:
+2.  Install uv if you don't have it:
     ```bash
-    python -m venv venv
-    source venv/bin/activate # On Windows: venv\Scripts\activate
-    pip install -r requirements.txt
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    ```
+3.  Install all dependencies (uv will download Python 3.10+ automatically if needed):
+    ```bash
+    uv sync
     ```
 4.  **Download the Models:** You must manually download these open-source foundational models and place them in their exact respective folders:
     *   **CorridorKey v1.0 Model (~300MB):** [Download CorridorKey_v1.0.pth](https://huggingface.co/nikopueringer/CorridorKey_v1.0/resolve/main/CorridorKey_v1.0.pth) 
         *   Place inside: `CorridorKeyModule/checkpoints/` and ensure it is named exactly `CorridorKey.pth`.
     *   **GVM Weights (Optional):** [HuggingFace: geyongtao/gvm](https://huggingface.co/geyongtao/gvm)
-        *   Install the HuggingFace CLI: `pip install -U "huggingface_hub[cli]"`
-        *   Download using the CLI: `huggingface-cli download geyongtao/gvm --local-dir gvm_core/weights`
+        *   Download using the CLI: `uv run hf download geyongtao/gvm --local-dir gvm_core/weights`
     *   **VideoMaMa Weights (Optional):** [HuggingFace: SammyLim/VideoMaMa](https://huggingface.co/SammyLim/VideoMaMa)
-        *   Install the HuggingFace CLI: `pip install -U "huggingface_hub[cli]"`
-        *   Download using the CLI: `huggingface-cli download SammyLim/VideoMaMa --local-dir VideoMaMaInferenceModule/checkpoints`
+        *   Download using the CLI: `uv run hf download SammyLim/VideoMaMa --local-dir VideoMaMaInferenceModule/checkpoints`
 
 ### 2. How it Works
 
@@ -85,8 +86,8 @@ Please give feedback and share your results!
 
 For the easiest experience, use the provided launcher scripts. These scripts launch a prompt-based configuration wizard in your terminal.
 
-*   **Windows:** Drag-and-drop a video file or folder onto `CorridorKey_local.bat` (Note: Only launch via Drag-and-Drop or CMD. Double-clicking the `.bat` directly will throw an error).
-*   **Linux / Mac:** Run or drag-and-drop a video file or folder onto `./CorridorKey_local.sh`
+*   **Windows:** Drag-and-drop a video file or folder onto `CorridorKey_DRAG_CLIPS_HERE_local.bat` (Note: Only launch via Drag-and-Drop or CMD. Double-clicking the `.bat` directly will throw an error).
+*   **Linux / Mac:** Run or drag-and-drop a video file or folder onto `./CorridorKey_DRAG_CLIPS_HERE_local.sh`
 
 **Workflow Steps:**
 1.  **Launch:** You can drag-and-drop a single loose video file (like an `.mp4`), a shot folder containing image sequences, or even a master "batch" folder containing multiple different shots all at once onto the launcher script.

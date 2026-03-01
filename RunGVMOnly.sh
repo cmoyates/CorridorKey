@@ -6,16 +6,13 @@ set -e
 # Path to script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Activate Environment
-source "${SCRIPT_DIR}/venv/bin/activate"
-
 # Enable OpenEXR Support
 export OPENCV_IO_ENABLE_OPENEXR=1
 
 echo "Starting Coarse Alpha Generation..."
 echo "Scanning ClipsForInference..."
 
-# Run Manager
-python "${SCRIPT_DIR}/clip_manager.py" --action generate_alphas
+# Run Manager (uv handles the virtual environment automatically)
+uv run python "${SCRIPT_DIR}/clip_manager.py" --action generate_alphas
 
 echo "Done."
