@@ -113,6 +113,16 @@ If enough people find this project interesting I'll get the training program and
 
 For developers looking for more details on the specifics of what is happening in the CorridorKey engine, check out the README in the `/CorridorKeyModule` folder. We also have a dedicated handover document outlining the pipeline architecture for AI assistants in `/docs/LLM_HANDOVER.md`.
 
+### Running Tests
+
+The project includes unit tests for the color math and compositing pipeline. No GPU or model weights required — tests run in a few seconds on any machine.
+
+```bash
+uv sync --group dev   # install test dependencies (pytest)
+uv run pytest          # run all tests
+uv run pytest -v       # verbose output (shows each test name)
+```
+
 ## CorridorKey Licensing and Permissions
 
 Use this tool for whatever you'd like, including for processing images as part of a commercial project! You MAY NOT repackage this tool and sell it, and any variations or improvements of this tool that are released must remain free and open source, and must include the name Corridor Key.

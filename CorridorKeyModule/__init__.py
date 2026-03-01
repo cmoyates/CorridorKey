@@ -1,1 +1,1 @@
-from .inference_engine import CorridorKeyEngine
+from .inference_engine import CorridorKeyEngine as CorridorKeyEngine

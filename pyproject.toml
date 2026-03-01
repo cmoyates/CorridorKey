@@ -53,6 +53,18 @@ packages = ["CorridorKeyModule", "gvm_core", "VideoMaMaInferenceModule"]
 [tool.ruff]
 target-version = "py311"
 line-length = 120
+extend-exclude = ["gvm_core/", "VideoMaMaInferenceModule/"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B"]
+
+[tool.ruff.format]
+# Third-party code excluded via top-level exclude
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "gpu: requires CUDA GPU (skipped in CI)",
+    "slow: long-running test",
+]
+addopts = "-x --tb=short"
