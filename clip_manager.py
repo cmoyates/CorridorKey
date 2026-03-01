@@ -2,22 +2,30 @@ import argparse
 import glob
 import logging
 import os
-import sys
-
-# Enable OpenEXR Support (Must be before cv2 import)
-os.environ["OPENCV_IO_ENABLE_OPENEXR"] = "1"
 import shutil
+import sys
 import warnings
+
+# Enable OpenEXR support in OpenCV — needed for EXR I/O throughout the pipeline.
+# Must be set before any cv2.imread/imwrite calls on .exr files.
+os.environ["OPENCV_IO_ENABLE_OPENEXR"] = "1"
 
 import cv2
 import numpy as np
 
-# Suppress warnings
-warnings.filterwarnings("ignore")
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+
+
+def _configure_environment():
+    """Set up logging and warnings for interactive CLI use.
+
+    Called from __main__ only — importing clip_manager as a library
+    does not suppress warnings or configure the root logger.
+    Library callers should configure logging themselves.
+    """
+    warnings.filterwarnings("ignore")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
 
 # Core Paths
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -192,8 +200,7 @@ def get_corridor_key_engine(device="cuda"):
 
         return CorridorKeyEngine(checkpoint_path=ckpt_path, device=device, img_size=2048)
     except Exception as e:
-        logger.error(f"Failed to initialize CorridorKey Engine: {e}")
-        sys.exit(1)
+        raise RuntimeError(f"Failed to initialize CorridorKey Engine: {e}") from e
 
 
 def generate_alphas(clips):
@@ -332,7 +339,8 @@ def run_videomama(clips, chunk_size=50):
 
     logger.info(f"Found {len(clips_to_process)} clips for VideoMaMa processing.")
 
-    # Import locally...
+    # Import locally — sys.path mutation is needed because VideoMaMaInferenceModule
+    # uses intra-package imports that assume its directory is on the path.
     try:
         sys.path.append(os.path.join(BASE_DIR, "VideoMaMaInferenceModule"))
         from VideoMaMaInferenceModule.inference import load_videomama_model, run_inference
@@ -1126,6 +1134,8 @@ def scan_clips():
 
 
 if __name__ == "__main__":
+    _configure_environment()
+
     parser = argparse.ArgumentParser(description="CorridorKey Clip Manager")
     parser.add_argument("--action", choices=["generate_alphas", "run_inference", "list", "wizard"], required=True)
     parser.add_argument("--win_path", help=r"Windows Path (example: V:\...) for Wizard Mode", default=None)
