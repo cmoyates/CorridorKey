@@ -150,9 +150,11 @@ Test each independently, document result:
 
 ---
 
-## Phase 4 — dtype & Precision Audit
+## Phase 4 — dtype & Precision Audit (COMPLETE)
 
 **Hypothesis:** The core path already uses float16 autocast correctly. Main risk is accidental float64 from numpy or upstream code.
+
+**Result:** Audit confirms all dtype usage is correct. fp16 autocast remains best default. bf16 supported but marginal parity failure. No float64 accumulation found. See `docs/phase4_results.md` for full results.
 
 ### Audit Checklist
 
