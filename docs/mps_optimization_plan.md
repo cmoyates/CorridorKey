@@ -44,17 +44,14 @@
 | autocast | Done | `torch.autocast(device_type=..., dtype=float16)` at line 160 |
 | `@torch.no_grad` | Used | Could switch to `inference_mode` |
 | `clear_device_cache` | Partial | No MPS branch — `torch.mps.empty_cache()` missing |
-| VideoMaMa pipeline | Broken | `pipeline.py:858` ignores MPS, falls back to CPU |
 | Post-processing | CPU (numpy) | By design — cv2 ops after `.cpu().numpy()` |
 
 ### Code Smells Found
 
 1. **`@torch.no_grad` instead of `torch.inference_mode()`** — `inference_engine.py:82`. `inference_mode` is faster, disables version tracking.
 2. **`clear_device_cache` ignores MPS** — `device_utils.py:69-73`. Should call `torch.mps.empty_cache()`.
-3. **VideoMaMa MPS gap** — `pipeline.py:858`: `device if torch.cuda.is_available() else "cpu"` silently drops MPS.
-4. **No `torch.mps.synchronize()` anywhere** — timing and memory measurements will be inaccurate without explicit sync.
-5. **Post-process is all numpy/cv2 on CPU** — expected for this workload, but the `.cpu().numpy()` transfer at lines 171-172 is a sync point worth measuring.
-6. **Potential float64 in GVM UNet** — `unet_spatio_temporal_condition.py:497` uses float64 for CUDA timesteps. Already float32 for MPS.
+3. **No `torch.mps.synchronize()` anywhere** — timing and memory measurements will be inaccurate without explicit sync.
+4. **Post-process is all numpy/cv2 on CPU** — expected for this workload, but the `.cpu().numpy()` transfer at lines 171-172 is a sync point worth measuring.
 
 ### No Issues Found
 
@@ -104,7 +101,6 @@ Already created. Prints full system/PyTorch/MPS/env-var diagnostics.
 |---|---|---|
 | `@torch.no_grad` → `@torch.inference_mode()` | `inference_engine.py:82` | Low — inference only, no autograd needed |
 | Add MPS branch to `clear_device_cache` | `device_utils.py:69-73` | None — additive |
-| Fix VideoMaMa device check | `pipeline.py:858` | Medium — 3rd party code, test carefully |
 
 ### Benchmark Matrix
 
@@ -117,7 +113,6 @@ Already created. Prints full system/PyTorch/MPS/env-var diagnostics.
 
 - inference_mode: keep if latency improves or is neutral
 - clear_device_cache: keep unconditionally (correctness fix)
-- VideoMaMa fix: keep if MPS inference works and outputs match CPU
 
 ---
 
@@ -164,7 +159,6 @@ Test each independently, document result:
 | `inference_engine.py:160` | `autocast(dtype=float16)` | Correct |
 | `inference_engine.py:20-21` | np.float32 mean/std | Correct |
 | Post-process (lines 171-174) | `.cpu().numpy()` → fp32 | Correct — CPU-side cv2 |
-| GVM UNet timesteps | fp32 for MPS, fp64 for CUDA | Already handled |
 
 ### Benchmark Matrix
 
@@ -181,33 +175,7 @@ Test each independently, document result:
 
 ---
 
-## Phase 5 — Data Pipeline (Limited Scope)
-
-**Hypothesis:** Core CorridorKey has no DataLoader — this phase applies mainly to GVM alpha generation.
-
-### GVM DataLoader Audit
-
-- `gvm_core/wrapper.py:215-217` uses `DataLoader(batch_size=N)` with no `num_workers`/`pin_memory` args
-- Default `num_workers=0` (main process) — likely fine on macOS
-- No `pin_memory` — correct, MPS doesn't support pinned memory
-
-### Benchmark Matrix (GVM only)
-
-| Config | Notes |
-|---|---|
-| num_workers=0 (default) | Baseline |
-| num_workers=2 | Test if macOS fork/spawn helps |
-| pin_memory=True | Expect regression or no-op on MPS |
-
-### Core CorridorKey Path
-
-- Single-frame loop in `clip_manager.py`
-- Pre/post-processing is numpy/cv2 on CPU
-- **Main optimization opportunity:** batch multiple frames if pipeline allows (future work, not this phase)
-
----
-
-## Phase 6 — Memory-Traffic Reductions
+## Phase 5 — Memory-Traffic Reductions
 
 **Hypothesis:** Reducing unnecessary sync points and tensor copies in the hot path improves throughput.
 
@@ -230,7 +198,7 @@ Test each independently, document result:
 
 ---
 
-## Phase 7 — Vision-Specific: channels_last
+## Phase 6 — Vision-Specific: channels_last
 
 **Hypothesis:** `channels_last` memory format may improve CNN refiner and decoder conv performance on MPS.
 
@@ -254,7 +222,7 @@ Test each independently, document result:
 
 ---
 
-## Phase 8 — torch.compile (Strictly Gated)
+## Phase 7 — torch.compile (Strictly Gated)
 
 **Hypothesis:** `torch.compile` on MPS may help the CNN refiner (regular conv pattern) but likely struggles with the Hiera backbone (dynamic shapes, attention).
 
@@ -281,7 +249,7 @@ Test each independently, document result:
 
 ---
 
-## Phase 9 — Unsupported Ops & Fallback Detection
+## Phase 8 — Unsupported Ops & Fallback Detection
 
 **Hypothesis:** Some ops may silently fall back to CPU via `PYTORCH_ENABLE_MPS_FALLBACK`. Need to identify and substitute.
 
@@ -304,7 +272,7 @@ Test each independently, document result:
 
 ---
 
-## Phase 10 — Advanced Profiling (Conditional)
+## Phase 9 — Advanced Profiling (Conditional)
 
 Only if earlier phases reveal an unexplained bottleneck.
 
@@ -322,14 +290,13 @@ Only if earlier phases reveal an unexplained bottleneck.
 
 ---
 
-## Phase 11 — Strategic Assessment
+## Phase 10 — Strategic Assessment
 
 ### Question: Is PyTorch+MPS the right long-term path?
 
 **Factors favoring PyTorch+MPS:**
 - Existing codebase is PyTorch
 - timm backbone (Hiera) only available in PyTorch
-- Diffusers/transformers ecosystem for GVM/VideoMaMa
 - MPS support in PyTorch 2.9 is mature for standard vision ops
 
 **Factors favoring future MLX exploration:**
@@ -348,12 +315,11 @@ Only if earlier phases reveal an unexplained bottleneck.
 | 1 | 2 | `inference_mode()` | +2-5% latency | Very low |
 | 2 | 2 | Fix `clear_device_cache` for MPS | Correctness | None |
 | 3 | 3 | MPS memory instrumentation | Visibility | None |
-| 4 | 7 | channels_last experiment | +5-15% if it works | Medium |
-| 5 | 6 | `non_blocking=True` input transfer | +1-3% | Low |
-| 6 | 8 | torch.compile on refiner | +10-20% if stable | High |
+| 4 | 6 | channels_last experiment | +5-15% if it works | Medium |
+| 5 | 5 | `non_blocking=True` input transfer | +1-3% | Low |
+| 6 | 7 | torch.compile on refiner | +10-20% if stable | High |
 | 7 | 4 | bfloat16 experiment | Unknown | Medium |
-| 8 | 9 | Unsupported op substitution | Varies | Low |
-| 9 | 2 | VideoMaMa MPS fix | Enables MPS for alpha gen | Medium |
+| 8 | 8 | Unsupported op substitution | Varies | Low |
 
 ---
 
