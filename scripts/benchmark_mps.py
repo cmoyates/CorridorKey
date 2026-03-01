@@ -2,17 +2,20 @@
 """MPS benchmark harness for CorridorKey GreenFormer inference.
 
 Measures sync-aware latency, throughput, peak memory, and output parity
-across devices (cpu, mps) and dtypes (float32, float16).
+across devices (cpu, mps) and dtypes (float32, float16, bfloat16).
 
 Usage:
     python scripts/benchmark_mps.py --device mps --dtype float16 --img-size 2048 --iterations 10
     python scripts/benchmark_mps.py --parity          # CPU vs MPS output comparison
-    python scripts/benchmark_mps.py --all              # full matrix: cpu fp32, mps fp32, mps fp16
+    python scripts/benchmark_mps.py --all              # full matrix: cpu fp32, mps fp32/fp16/bf16
+    python scripts/benchmark_mps.py --phase4           # Phase 4 dtype audit: fp32 no-autocast, fp16, bf16 + parity
+    python scripts/benchmark_mps.py --no-autocast      # disable autocast for true fp32 baseline
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import statistics
 import sys
@@ -97,6 +100,13 @@ def _resolve_dtype(name: str) -> torch.dtype:
 # Benchmark
 # ---------------------------------------------------------------------------
 
+def _autocast_context(device_type: str, dtype: torch.dtype, enabled: bool):
+    """Return autocast context manager, or a no-op if disabled."""
+    if enabled:
+        return torch.autocast(device_type=device_type, dtype=dtype)
+    return contextlib.nullcontext()
+
+
 def run_benchmark(
     device_str: str,
     dtype_str: str,
@@ -104,14 +114,17 @@ def run_benchmark(
     iterations: int,
     use_compile: bool,
     verbose: bool = False,
+    no_autocast: bool = False,
 ) -> dict:
     """Run benchmark and return results dict."""
     device = torch.device(device_str)
     autocast_dtype = _resolve_dtype(dtype_str)
+    autocast_enabled = not no_autocast
 
     print(f"\n{'=' * 60}")
     print(f"Benchmark: device={device_str}  dtype={dtype_str}  "
-          f"img_size={img_size}  iters={iterations}  compile={use_compile}")
+          f"img_size={img_size}  iters={iterations}  compile={use_compile}  "
+          f"autocast={autocast_enabled}")
     print(f"{'=' * 60}")
 
     # --- Model load ---
@@ -132,7 +145,7 @@ def run_benchmark(
     # --- Warmup ---
     print(f"Warmup ({WARMUP_ITERATIONS} iterations)...")
     for _ in range(WARMUP_ITERATIONS):
-        with torch.inference_mode(), torch.autocast(device_type=device.type, dtype=autocast_dtype):
+        with torch.inference_mode(), _autocast_context(device.type, autocast_dtype, autocast_enabled):
             _ = model(inp)
         _sync(device)
 
@@ -149,7 +162,7 @@ def run_benchmark(
     for i in range(iterations):
         _sync(device)
         t0 = time.perf_counter()
-        with torch.inference_mode(), torch.autocast(device_type=device.type, dtype=autocast_dtype):
+        with torch.inference_mode(), _autocast_context(device.type, autocast_dtype, autocast_enabled):
             _ = model(inp)
         _sync(device)
         elapsed = time.perf_counter() - t0
@@ -194,6 +207,7 @@ def run_benchmark(
     results = {
         "device": device_str,
         "dtype": dtype_str,
+        "autocast": autocast_enabled,
         "img_size": img_size,
         "iterations": iterations,
         "compile": use_compile,
@@ -243,7 +257,7 @@ def run_parity(
 
     autocast_dtype = _resolve_dtype(dtype_str)
 
-    # --- Reference: CPU fp32 ---
+    # --- Reference: CPU fp32 (build once, share weights) ---
     cpu_device = torch.device("cpu")
     model_cpu, _ = _build_model(cpu_device, img_size)
 
@@ -257,16 +271,20 @@ def run_parity(
     ref_alpha = ref_out["alpha"].clone()
     ref_fg = ref_out["fg"].clone()
 
-    # --- Target device ---
+    # --- Target device (copy same weights to target) ---
     target = torch.device(target_device)
-    model_target, _ = _build_model(target, img_size)
+    import copy
+    model_target = copy.deepcopy(model_cpu).to(target)
+    model_target.eval()
+    _sync(target)
     inp_target = inp_cpu.to(target)
 
-    with torch.inference_mode(), torch.autocast(device_type=target.type, dtype=autocast_dtype):
+    use_autocast = autocast_dtype != torch.float32
+    with torch.inference_mode(), _autocast_context(target.type, autocast_dtype, use_autocast):
         target_out = model_target(inp_target)
     _sync(target)
-    target_alpha = target_out["alpha"].cpu()
-    target_fg = target_out["fg"].cpu()
+    target_alpha = target_out["alpha"].float().cpu()
+    target_fg = target_out["fg"].float().cpu()
 
     # --- Compare ---
     def _check(name: str, ref: torch.Tensor, tgt: torch.Tensor) -> dict:
@@ -318,12 +336,13 @@ def format_markdown(results: list[dict], parity: list[dict] | None = None) -> st
 
     if results:
         lines.append("## Latency & Throughput\n")
-        lines.append("| Device | dtype | Size | Median (s) | P95 (s) | FPS | Peak Mem (MB) | Compile |")
-        lines.append("|--------|-------|------|-----------|---------|-----|---------------|---------|")
+        lines.append("| Device | dtype | Autocast | Size | Median (s) | P95 (s) | FPS | Peak Mem (MB) | Compile |")
+        lines.append("|--------|-------|----------|------|-----------|---------|-----|---------------|---------|")
         for r in results:
             peak = r.get("peak_memory_mb") or "N/A"
+            autocast = r.get("autocast", True)
             lines.append(
-                f"| {r['device']} | {r['dtype']} | {r['img_size']} | "
+                f"| {r['device']} | {r['dtype']} | {autocast} | {r['img_size']} | "
                 f"{r['latency_median_sec']:.4f} | {r['latency_p95_sec']:.4f} | "
                 f"{r['throughput_fps']:.2f} | {peak} | {r['compile']} |"
             )
@@ -357,8 +376,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--img-size", type=int, default=DEFAULT_IMG_SIZE, help="Input image size (square)")
     parser.add_argument("--iterations", type=int, default=DEFAULT_ITERATIONS, help="Measured iterations")
     parser.add_argument("--compile", action="store_true", help="Use torch.compile()")
+    parser.add_argument("--no-autocast", action="store_true", help="Disable autocast (true fp32 baseline)")
     parser.add_argument("--parity", action="store_true", help="Run parity check (CPU fp32 vs target)")
     parser.add_argument("--all", action="store_true", help="Run full benchmark matrix")
+    parser.add_argument("--phase4", action="store_true", help="Phase 4 dtype audit: fp32 no-autocast, fp16, bf16 + parity")
     parser.add_argument("--verbose", action="store_true", help="Per-iteration memory logging")
     parser.add_argument("--output", type=str, default=None, help="Write JSON results to file")
     return parser.parse_args()
@@ -370,37 +391,78 @@ def main() -> None:
     all_results: list[dict] = []
     all_parity: list[dict] = []
 
-    if args.all:
+    def _mps_available() -> bool:
+        return hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+
+    def _run_config(dev: str, dt: str, comp: bool, no_ac: bool = False) -> dict | None:
+        if dev == "mps" and not _mps_available():
+            print(f"Skipping {dev} — not available")
+            return None
+        if dev == "cuda" and not torch.cuda.is_available():
+            print(f"Skipping {dev} — not available")
+            return None
+        try:
+            return run_benchmark(
+                dev, dt, args.img_size, args.iterations, comp,
+                verbose=args.verbose, no_autocast=no_ac,
+            )
+        except RuntimeError as exc:
+            print(f"SKIPPED {dev}/{dt}: {exc}")
+            return None
+
+    if args.phase4:
+        # Phase 4 dtype audit matrix
+        # (device, dtype, compile, no_autocast)
+        configs = [
+            ("mps", "float32", False, True),   # fp32 no-autocast control
+            ("mps", "float16", False, False),   # fp16 autocast (current default)
+            ("mps", "bfloat16", False, False),  # bf16 autocast (test support)
+        ]
+        for dev, dt, comp, no_ac in configs:
+            result = _run_config(dev, dt, comp, no_ac)
+            if result is not None:
+                all_results.append(result)
+
+        # Parity checks for each dtype
+        if _mps_available():
+            for dt in ("float32", "float16", "bfloat16"):
+                try:
+                    parity = run_parity("mps", dt, args.img_size)
+                    all_parity.append(parity)
+                except RuntimeError as exc:
+                    print(f"SKIPPED parity {dt}: {exc}")
+
+    elif args.all:
         # Full matrix
         configs = [
-            ("cpu", "float32", False),
-            ("mps", "float32", False),
-            ("mps", "float16", False),
+            ("cpu", "float32", False, False),
+            ("mps", "float32", False, False),
+            ("mps", "float16", False, False),
+            ("mps", "bfloat16", False, False),
         ]
-        for dev, dt, comp in configs:
-            # Skip unavailable devices
-            if dev == "mps" and not (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()):
-                print(f"Skipping {dev} — not available")
-                continue
-            if dev == "cuda" and not torch.cuda.is_available():
-                print(f"Skipping {dev} — not available")
-                continue
-
-            result = run_benchmark(dev, dt, args.img_size, args.iterations, comp, verbose=args.verbose)
-            all_results.append(result)
+        for dev, dt, comp, no_ac in configs:
+            result = _run_config(dev, dt, comp, no_ac)
+            if result is not None:
+                all_results.append(result)
 
         # Parity for MPS configs
-        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            for dt in ("float32", "float16"):
-                parity = run_parity("mps", dt, args.img_size)
-                all_parity.append(parity)
+        if _mps_available():
+            for dt in ("float32", "float16", "bfloat16"):
+                try:
+                    parity = run_parity("mps", dt, args.img_size)
+                    all_parity.append(parity)
+                except RuntimeError as exc:
+                    print(f"SKIPPED parity {dt}: {exc}")
 
     elif args.parity:
         parity = run_parity(args.device, args.dtype, args.img_size)
         all_parity.append(parity)
 
     else:
-        result = run_benchmark(args.device, args.dtype, args.img_size, args.iterations, args.compile, verbose=args.verbose)
+        result = run_benchmark(
+            args.device, args.dtype, args.img_size, args.iterations, args.compile,
+            verbose=args.verbose, no_autocast=args.no_autocast,
+        )
         all_results.append(result)
 
     # --- Output ---
