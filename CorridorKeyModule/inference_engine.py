@@ -116,7 +116,7 @@ class CorridorKeyEngine:
              # Resize in Linear
              img_resized_lin = cv2.resize(image, (self.img_size, self.img_size), interpolation=cv2.INTER_LINEAR)
              # Convert to sRGB for Model
-             img_resized = cu.to_srgb(img_resized_lin)
+             img_resized = cu.linear_to_srgb(img_resized_lin)
         else:
              # Standard sRGB Resize
              img_resized = cv2.resize(image, (self.img_size, self.img_size), interpolation=cv2.INTER_LINEAR)
@@ -200,5 +200,5 @@ class CorridorKeyEngine:
             'alpha': res_alpha,        # Linear, Raw Prediction
             'fg': res_fg,              # sRGB, Raw Prediction (Straight)
             'comp': comp_srgb,         # sRGB, Composite
-            'processed': processed_rgba # sRGB/Premul, RGBA, Garbage Matted & Despilled
+            'processed': processed_rgba # Linear/Premul, RGBA, Garbage Matted & Despilled
         }
