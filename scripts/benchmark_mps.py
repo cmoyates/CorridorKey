@@ -28,6 +28,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from CorridorKeyModule.core.model_transformer import GreenFormer  # noqa: E402
+from device_utils import clear_device_cache, memory_snapshot  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -53,28 +54,7 @@ def _sync(device: torch.device) -> None:
         torch.cuda.synchronize()
 
 
-def _peak_memory_mb(device: torch.device) -> float | None:
-    """Return peak allocated memory in MB, or None if unavailable."""
-    if device.type == "mps":
-        try:
-            return torch.mps.driver_allocated_memory() / (1024 ** 2)
-        except Exception:
-            return None
-    if device.type == "cuda":
-        return torch.cuda.max_memory_allocated(device) / (1024 ** 2)
-    return None
-
-
-def _current_memory_mb(device: torch.device) -> float | None:
-    """Return current allocated memory in MB."""
-    if device.type == "mps":
-        try:
-            return torch.mps.current_allocated_memory() / (1024 ** 2)
-        except Exception:
-            return None
-    if device.type == "cuda":
-        return torch.cuda.memory_allocated(device) / (1024 ** 2)
-    return None
+MEMORY_LEAK_THRESHOLD = 0.10  # 10% growth flags potential leak
 
 
 def _build_model(device: torch.device, img_size: int) -> tuple[GreenFormer, float]:
@@ -123,6 +103,7 @@ def run_benchmark(
     img_size: int,
     iterations: int,
     use_compile: bool,
+    verbose: bool = False,
 ) -> dict:
     """Run benchmark and return results dict."""
     device = torch.device(device_str)
@@ -135,8 +116,11 @@ def run_benchmark(
 
     # --- Model load ---
     model, load_time = _build_model(device, img_size)
-    mem_after_load = _current_memory_mb(device)
+    snap_after_load = memory_snapshot(device)
+    mem_after_load = snap_after_load["current_alloc_mb"]
     print(f"Model load: {load_time:.2f}s  |  Memory after load: {mem_after_load or 'N/A'} MB")
+    if verbose:
+        print(f"  Full snapshot: {snap_after_load}")
 
     if use_compile:
         print("Compiling model with torch.compile()...")
@@ -152,13 +136,17 @@ def run_benchmark(
             _ = model(inp)
         _sync(device)
 
-    mem_after_warmup = _current_memory_mb(device)
+    snap_after_warmup = memory_snapshot(device)
+    mem_after_warmup = snap_after_warmup["current_alloc_mb"]
     print(f"Memory after warmup: {mem_after_warmup or 'N/A'} MB")
+    if verbose:
+        print(f"  Full snapshot: {snap_after_warmup}")
 
     # --- Measured iterations ---
     latencies: list[float] = []
+    per_iter_memory: list[float | None] = []
     print(f"Measuring ({iterations} iterations)...")
-    for _ in range(iterations):
+    for i in range(iterations):
         _sync(device)
         t0 = time.perf_counter()
         with torch.inference_mode(), torch.autocast(device_type=device.type, dtype=autocast_dtype):
@@ -167,7 +155,31 @@ def run_benchmark(
         elapsed = time.perf_counter() - t0
         latencies.append(elapsed)
 
-    peak_mem = _peak_memory_mb(device)
+        iter_mem = memory_snapshot(device)["current_alloc_mb"]
+        per_iter_memory.append(iter_mem)
+        if verbose and iter_mem is not None:
+            print(f"  iter {i}: {elapsed:.4f}s  mem={iter_mem:.1f} MB")
+
+    # Coarse-boundary cache clear after all measured iterations
+    clear_device_cache(device)
+
+    peak_snap = memory_snapshot(device)
+    peak_mem = peak_snap["driver_alloc_mb"]
+
+    # --- Leak detection ---
+    leak_warning = None
+    valid_mems = [m for m in per_iter_memory if m is not None]
+    if len(valid_mems) >= 2:
+        first_mem = valid_mems[0]
+        last_mem = valid_mems[-1]
+        if first_mem > 0:
+            growth_ratio = (last_mem - first_mem) / first_mem
+            if growth_ratio > MEMORY_LEAK_THRESHOLD:
+                leak_warning = (
+                    f"Potential memory leak: {first_mem:.1f} MB -> {last_mem:.1f} MB "
+                    f"({growth_ratio:.1%} growth over {iterations} iterations)"
+                )
+                print(f"  WARNING: {leak_warning}")
 
     # --- Compute stats ---
     latencies_sorted = sorted(latencies)
@@ -196,6 +208,8 @@ def run_benchmark(
         "memory_after_load_mb": round(mem_after_load, 1) if mem_after_load else None,
         "memory_after_warmup_mb": round(mem_after_warmup, 1) if mem_after_warmup else None,
         "peak_memory_mb": round(peak_mem, 1) if peak_mem else None,
+        "per_iter_memory_mb": [round(m, 1) if m is not None else None for m in per_iter_memory],
+        "leak_warning": leak_warning,
         "all_latencies_sec": [round(lat, 4) for lat in latencies],
     }
 
@@ -207,6 +221,8 @@ def run_benchmark(
     print(f"  Min/Max:          {min_lat:.4f}s / {max_lat:.4f}s")
     print(f"  Throughput:       {throughput:.2f} fps")
     print(f"  Peak memory:      {peak_mem or 'N/A'} MB")
+    if leak_warning:
+        print(f"  LEAK WARNING:     {leak_warning}")
 
     return results
 
@@ -343,6 +359,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--compile", action="store_true", help="Use torch.compile()")
     parser.add_argument("--parity", action="store_true", help="Run parity check (CPU fp32 vs target)")
     parser.add_argument("--all", action="store_true", help="Run full benchmark matrix")
+    parser.add_argument("--verbose", action="store_true", help="Per-iteration memory logging")
     parser.add_argument("--output", type=str, default=None, help="Write JSON results to file")
     return parser.parse_args()
 
@@ -369,7 +386,7 @@ def main() -> None:
                 print(f"Skipping {dev} — not available")
                 continue
 
-            result = run_benchmark(dev, dt, args.img_size, args.iterations, comp)
+            result = run_benchmark(dev, dt, args.img_size, args.iterations, comp, verbose=args.verbose)
             all_results.append(result)
 
         # Parity for MPS configs
@@ -383,7 +400,7 @@ def main() -> None:
         all_parity.append(parity)
 
     else:
-        result = run_benchmark(args.device, args.dtype, args.img_size, args.iterations, args.compile)
+        result = run_benchmark(args.device, args.dtype, args.img_size, args.iterations, args.compile, verbose=args.verbose)
         all_results.append(result)
 
     # --- Output ---
