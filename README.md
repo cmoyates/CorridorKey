@@ -109,6 +109,29 @@ For the easiest experience, use the provided launcher scripts. These scripts lau
 
 If enough people find this project interesting I'll get the training program and datasets uploaded so we can all really go to town making the absolute best keyer fine tunes! Just hit me with some messages on the Corridor Creates discord or here. If enough people lock in, I'll get this stuff packaged up. Hardware requirements are beefy and the gigabytes are plentiful so I don't want to commit the time unless there's demand.
 
+## Device Selection
+
+By default, CorridorKey auto-detects the best available compute device: **CUDA > MPS > CPU**.
+
+**Override via CLI flag:**
+```bash
+uv run python clip_manager.py --action wizard --win_path "V:\..." --device mps
+uv run python clip_manager.py --action run_inference --device cpu
+```
+
+**Override via environment variable:**
+```bash
+export CORRIDORKEY_DEVICE=cpu
+uv run python clip_manager.py --action wizard --win_path "V:\..."
+```
+
+Priority: `--device` flag > `CORRIDORKEY_DEVICE` env var > auto-detect.
+
+**Mac users (Apple Silicon):** MPS support is experimental in PyTorch. If you encounter operator errors, set `PYTORCH_ENABLE_MPS_FALLBACK=1` to fall back to CPU for unsupported ops:
+```bash
+export PYTORCH_ENABLE_MPS_FALLBACK=1
+```
+
 ## Advanced Usage
 
 For developers looking for more details on the specifics of what is happening in the CorridorKey engine, check out the README in the `/CorridorKeyModule` folder. We also have a dedicated handover document outlining the pipeline architecture for AI assistants in `/docs/LLM_HANDOVER.md`.

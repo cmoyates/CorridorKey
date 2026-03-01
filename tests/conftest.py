@@ -6,21 +6,28 @@ import pytest
 
 def pytest_configure(config):
     """Register custom markers."""
-    config.addinivalue_line("markers", "gpu: requires CUDA GPU (skipped in CI)")
+    config.addinivalue_line("markers", "gpu: requires CUDA or MPS GPU (skipped when unavailable)")
     config.addinivalue_line("markers", "slow: long-running test")
 
 
-def pytest_collection_modifyitems(config, items):
-    """Auto-skip GPU tests when CUDA is not available."""
+def _has_gpu():
+    """Check if any GPU backend (CUDA or MPS) is available."""
     try:
         import torch
 
-        has_cuda = torch.cuda.is_available()
+        if torch.cuda.is_available():
+            return True
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return True
     except ImportError:
-        has_cuda = False
+        pass
+    return False
 
-    if not has_cuda:
-        skip_gpu = pytest.mark.skip(reason="CUDA not available")
+
+def pytest_collection_modifyitems(config, items):
+    """Auto-skip GPU tests when no GPU backend is available."""
+    if not _has_gpu():
+        skip_gpu = pytest.mark.skip(reason="No GPU available (neither CUDA nor MPS)")
         for item in items:
             if "gpu" in item.keywords:
                 item.add_marker(skip_gpu)

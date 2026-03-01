@@ -223,7 +223,8 @@ class GVMPipeline(DiffusionPipeline, GVMLoraLoader):
                     latent_all = latent.clone()
 
                 pre_latent = latent
-                torch.cuda.empty_cache()
+                if rgb.device.type == "cuda":
+                    torch.cuda.empty_cache()
 
             assert latent_all.shape[1] == image.shape[1]
 

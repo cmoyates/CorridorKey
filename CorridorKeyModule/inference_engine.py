@@ -11,7 +11,7 @@ from .core.model_transformer import GreenFormer
 
 
 class CorridorKeyEngine:
-    def __init__(self, checkpoint_path, device="cuda", img_size=2048, use_refiner=True):
+    def __init__(self, checkpoint_path, device="cpu", img_size=2048, use_refiner=True):
         self.device = torch.device(device)
         self.img_size = img_size
         self.checkpoint_path = checkpoint_path

@@ -27,7 +27,8 @@ def seed_all(seed: int = 0):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 def impad_multi(img, multiple=32):
     # img: (N, C, H, W)
@@ -57,7 +58,7 @@ class GVMProcessor:
                  model_base=None,
                  unet_base=None,
                  lora_base=None,
-                 device="cuda",
+                 device="cpu",
                  seed=None):
         self.device = torch.device(device)
         

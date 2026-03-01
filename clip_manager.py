@@ -12,6 +12,8 @@ import warnings
 import cv2
 import numpy as np
 
+from device_utils import resolve_device
+
 # Suppress warnings
 warnings.filterwarnings("ignore")
 
@@ -158,7 +160,7 @@ class ClipEntry:
 # --- Logic ---
 
 
-def get_gvm_processor(device="cuda"):
+def get_gvm_processor(device="cpu"):
     try:
         from gvm_core import GVMProcessor
 
@@ -171,7 +173,7 @@ def get_gvm_processor(device="cuda"):
         raise RuntimeError(f"Failed to initialize GVM Processor: {e}") from e
 
 
-def get_corridor_key_engine(device="cuda"):
+def get_corridor_key_engine(device="cpu"):
     try:
         from CorridorKeyModule.inference_engine import CorridorKeyEngine
 
@@ -196,7 +198,7 @@ def get_corridor_key_engine(device="cuda"):
         sys.exit(1)
 
 
-def generate_alphas(clips):
+def generate_alphas(clips, device=None):
     clips_to_process = [c for c in clips if c.alpha_asset is None]
 
     if not clips_to_process:
@@ -205,9 +207,8 @@ def generate_alphas(clips):
 
     logger.info(f"Found {len(clips_to_process)} clips missing Alpha.")
 
-    import torch
-
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if device is None:
+        device = resolve_device()
 
     try:
         processor = get_gvm_processor(device=device)
@@ -275,7 +276,7 @@ def generate_alphas(clips):
             traceback.print_exc()
 
 
-def run_videomama(clips, chunk_size=50):
+def run_videomama(clips, chunk_size=50, device=None):
     """
     Runs VideoMaMa on clips that have VideoMamaMaskHint but NO AlphaHint.
     """
@@ -340,9 +341,8 @@ def run_videomama(clips, chunk_size=50):
         logger.error(f"Failed to import VideoMaMa: {e}")
         return
 
-    import torch
-
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if device is None:
+        device = resolve_device()
 
     logger.info("Loading VideoMaMa Pipeline...")
     pipeline = load_videomama_model(device=device)
@@ -518,7 +518,7 @@ def run_videomama(clips, chunk_size=50):
             traceback.print_exc()
 
 
-def run_inference(clips):
+def run_inference(clips, device=None):
     ready_clips = [c for c in clips if c.input_asset and c.alpha_asset]
 
     if not ready_clips:
@@ -584,9 +584,9 @@ def run_inference(clips):
         os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     import numpy as np
-    import torch
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if device is None:
+        device = resolve_device()
     engine = get_corridor_key_engine(device=device)
 
     for clip in ready_clips:
@@ -856,7 +856,7 @@ def organize_clips(clips_dir):
             organize_target(full_path)
 
 
-def interactive_wizard(win_path):
+def interactive_wizard(win_path, device=None):
     print("\n" + "=" * 60)
     print(" CORRIDOR KEY - SMART WIZARD")
     print("=" * 60)
@@ -1047,7 +1047,7 @@ def interactive_wizard(win_path):
             print("\n--- VideoMaMa ---")
             print("Scanning for VideoMamaMaskHints...")
             # We pass ALL missing alpha clips. run_videomama checks for the actual files.
-            run_videomama(missing_alpha, chunk_size=50)
+            run_videomama(missing_alpha, chunk_size=50, device=device)
             input("VideoMaMa batch complete. Press Enter to Re-Scan...")
             continue
 
@@ -1058,14 +1058,14 @@ def interactive_wizard(win_path):
 
             yn = input("Proceed with GVM? [y/N]: ").strip().lower()
             if yn == "y":
-                generate_alphas(raw)
+                generate_alphas(raw, device=device)
                 input("GVM batch complete. Press Enter to Re-Scan...")
             continue
 
         elif choice == "i":
             # Inference
             print("\n--- Corridor Key Inference ---")
-            run_inference(ready)
+            run_inference(ready, device=device)
             input("Inference batch complete. Press Enter to Re-Scan...")
             continue
 
@@ -1129,19 +1129,28 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="CorridorKey Clip Manager")
     parser.add_argument("--action", choices=["generate_alphas", "run_inference", "list", "wizard"], required=True)
     parser.add_argument("--win_path", help=r"Windows Path (example: V:\...) for Wizard Mode", default=None)
+    parser.add_argument(
+        "--device",
+        choices=["auto", "cuda", "mps", "cpu"],
+        default="auto",
+        help="Compute device (default: auto-detect CUDA > MPS > CPU)",
+    )
 
     args = parser.parse_args()
+
+    device = resolve_device(args.device)
+    logger.info(f"Using device: {device}")
 
     if args.action == "list":
         scan_clips()
     elif args.action == "generate_alphas":
         clips = scan_clips()
-        generate_alphas(clips)
+        generate_alphas(clips, device=device)
     elif args.action == "run_inference":
         clips = scan_clips()
-        run_inference(clips)
+        run_inference(clips, device=device)
     elif args.action == "wizard":
         if not args.win_path:
             print("Error: --win_path required for wizard.")
         else:
-            interactive_wizard(args.win_path)
+            interactive_wizard(args.win_path, device=device)
