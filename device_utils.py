@@ -61,6 +61,39 @@ def resolve_device(requested: str | None = None) -> str:
     return device
 
 
+def memory_snapshot(device: torch.device | str) -> dict[str, float | None]:
+    """Return memory stats (in MB) for the given device.
+
+    Keys: current_alloc_mb, driver_alloc_mb, recommended_max_mb.
+    Values are None when the API is unavailable or device is CPU.
+    """
+    device_type = device.type if isinstance(device, torch.device) else device
+    snapshot: dict[str, float | None] = {
+        "current_alloc_mb": None,
+        "driver_alloc_mb": None,
+        "recommended_max_mb": None,
+    }
+
+    if device_type == "mps":
+        try:
+            snapshot["current_alloc_mb"] = torch.mps.current_allocated_memory() / (1024 ** 2)
+        except Exception:
+            pass
+        try:
+            snapshot["driver_alloc_mb"] = torch.mps.driver_allocated_memory() / (1024 ** 2)
+        except Exception:
+            pass
+        try:
+            snapshot["recommended_max_mb"] = torch.mps.recommended_max_memory() / (1024 ** 2)
+        except Exception:
+            pass
+    elif device_type == "cuda":
+        snapshot["current_alloc_mb"] = torch.cuda.memory_allocated(device) / (1024 ** 2)
+        snapshot["driver_alloc_mb"] = torch.cuda.max_memory_allocated(device) / (1024 ** 2)
+
+    return snapshot
+
+
 def clear_device_cache(device: torch.device | str) -> None:
     """Clear GPU memory cache if applicable (no-op for CPU)."""
     device_type = device.type if isinstance(device, torch.device) else device
