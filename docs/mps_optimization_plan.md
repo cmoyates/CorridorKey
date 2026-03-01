@@ -175,26 +175,38 @@ Test each independently, document result:
 
 ---
 
-## Phase 5 — Memory-Traffic Reductions
+## Phase 5 — Memory-Traffic Reductions (COMPLETE)
 
 **Hypothesis:** Reducing unnecessary sync points and tensor copies in the hot path improves throughput.
 
-### Audit Targets
+**Result:** Transfer costs are <0.2% of total inference time. `non_blocking=True` is effectively neutral (+0.07%). Kept as correct-by-default pattern. No further memory-traffic optimizations needed — the bottleneck is entirely in the model forward pass.
 
-| Pattern | Location | Action |
+### Changes
+
+| Change | File | Status |
 |---|---|---|
-| `.cpu().numpy()` in hot path | `inference_engine.py:171-172` | Necessary — cv2 post-process. Measure transfer cost. |
-| No `.item()` calls in inference | Clean | No action |
-| No repeated `.to(device)` | Clean | No action |
-| `non_blocking=True` on input transfer | `inference_engine.py:148` | Test — `.to(device, non_blocking=True)` |
-| Refiner hook registration per frame | `inference_engine.py:152-158` | Only when `refiner_scale != 1.0` — OK |
+| `non_blocking=True` on `.to(device)` | `inference_engine.py:148` | Done — kept |
 
-### Benchmark
+### Benchmark Results (1024x1024, 10 iterations)
 
-| Change | Expected |
-|---|---|
-| `non_blocking=True` on `.to(device)` | Small win if MPS command queue isn't empty |
-| Pre-allocate output buffer | Minimal — single frame, small tensors |
+#### Transfer Costs
+
+| Direction | Mode | Median (ms) | % of Inference |
+|---|---|---|---|
+| CPU→MPS | blocking | 0.528 | 0.09% |
+| CPU→MPS | non_blocking | 0.475 | 0.08% |
+| MPS→CPU | .cpu().numpy() | 0.655 | 0.11% |
+
+#### End-to-End (fp16 autocast, includes transfers)
+
+| Mode | Median (s) | P95 (s) | FPS | Delta |
+|---|---|---|---|---|
+| blocking | 0.5985 | 0.5998 | 1.67 | baseline |
+| non_blocking | 0.5981 | 0.5990 | 1.67 | +0.07% |
+
+### Key Finding
+
+Transfer overhead is negligible (~1.2ms out of ~598ms). The bottleneck is 100% model forward pass. Future optimization should target `channels_last` (Phase 6) and `torch.compile` (Phase 7).
 
 ---
 

@@ -1,0 +1,20 @@
+{
+  "phase5_transfer": {
+    "to_device_blocking_median_ms": 0.528,
+    "to_device_blocking_p95_ms": 0.603,
+    "to_device_non_blocking_median_ms": 0.475,
+    "to_device_non_blocking_p95_ms": 0.485,
+    "to_cpu_numpy_median_ms": 0.655,
+    "to_cpu_numpy_p95_ms": 0.814,
+    "e2e_blocking_median_sec": 0.5985,
+    "e2e_blocking_p95_sec": 0.5998,
+    "e2e_blocking_fps": 1.67,
+    "e2e_non_blocking_median_sec": 0.5981,
+    "e2e_non_blocking_p95_sec": 0.599,
+    "e2e_non_blocking_fps": 1.67,
+    "device": "mps",
+    "img_size": 1024,
+    "iterations": 10,
+    "non_blocking_delta_pct": 0.07
+  }
+}

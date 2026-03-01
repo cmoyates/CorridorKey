@@ -327,6 +327,120 @@ def run_parity(
 
 
 # ---------------------------------------------------------------------------
+# Phase 5: Memory-traffic benchmark
+# ---------------------------------------------------------------------------
+
+PHASE5_TRANSFER_ITERS = 20
+
+
+def run_transfer_benchmark(
+    device_str: str,
+    img_size: int,
+    iterations: int = PHASE5_TRANSFER_ITERS,
+) -> dict:
+    """Measure CPU→device and device→CPU transfer costs, blocking vs non_blocking."""
+    device = torch.device(device_str)
+
+    print(f"\n{'=' * 60}")
+    print(f"Phase 5 Transfer Benchmark: {device_str}  img_size={img_size}  iters={iterations}")
+    print(f"{'=' * 60}")
+
+    # Simulate real inference_engine input: [1, 4, H, W] fp32 on CPU
+    inp_cpu = torch.randn(1, INPUT_CHANNELS, img_size, img_size)
+
+    results = {}
+
+    # --- CPU→device: blocking vs non_blocking ---
+    for non_blocking in (False, True):
+        label = "non_blocking" if non_blocking else "blocking"
+        latencies = []
+        for _ in range(iterations):
+            _sync(device)
+            t0 = time.perf_counter()
+            _ = inp_cpu.to(device, non_blocking=non_blocking)
+            _sync(device)
+            latencies.append(time.perf_counter() - t0)
+
+        median_lat = statistics.median(latencies)
+        results[f"to_device_{label}_median_ms"] = round(median_lat * 1000, 3)
+        results[f"to_device_{label}_p95_ms"] = round(
+            sorted(latencies)[max(0, int(len(latencies) * 0.95) - 1)] * 1000, 3
+        )
+        print(f"  CPU→{device_str} ({label}): median={median_lat*1000:.3f}ms")
+
+    # --- device→CPU: .cpu().numpy() (the real post-process path) ---
+    # Create output-sized tensors on device (model output shape)
+    out_alpha = torch.randn(1, 1, img_size, img_size, device=device)
+    out_fg = torch.randn(1, 3, img_size, img_size, device=device)
+
+    latencies_transfer_back = []
+    for _ in range(iterations):
+        _sync(device)
+        t0 = time.perf_counter()
+        _ = out_alpha[0].permute(1, 2, 0).cpu().numpy()
+        _ = out_fg[0].permute(1, 2, 0).cpu().numpy()
+        elapsed = time.perf_counter() - t0
+        latencies_transfer_back.append(elapsed)
+
+    median_back = statistics.median(latencies_transfer_back)
+    results["to_cpu_numpy_median_ms"] = round(median_back * 1000, 3)
+    results["to_cpu_numpy_p95_ms"] = round(
+        sorted(latencies_transfer_back)[max(0, int(len(latencies_transfer_back) * 0.95) - 1)] * 1000, 3
+    )
+    print(f"  {device_str}→CPU .cpu().numpy(): median={median_back*1000:.3f}ms")
+
+    # --- End-to-end: full inference with CPU input (blocking vs non_blocking) ---
+    model, _ = _build_model(device, img_size)
+
+    for non_blocking in (False, True):
+        label = "non_blocking" if non_blocking else "blocking"
+
+        # Warmup
+        for _ in range(WARMUP_ITERATIONS):
+            with torch.inference_mode(), torch.autocast(device_type=device.type, dtype=torch.float16):
+                inp_dev = inp_cpu.to(device, non_blocking=non_blocking)
+                out = model(inp_dev)
+            _sync(device)
+
+        # Measured
+        latencies = []
+        for _ in range(iterations):
+            _sync(device)
+            t0 = time.perf_counter()
+            with torch.inference_mode(), torch.autocast(device_type=device.type, dtype=torch.float16):
+                inp_dev = inp_cpu.to(device, non_blocking=non_blocking)
+                out = model(inp_dev)
+                # Include the cpu().numpy() transfer in end-to-end
+                _ = out["alpha"][0].permute(1, 2, 0).cpu().numpy()
+                _ = out["fg"][0].permute(1, 2, 0).cpu().numpy()
+            _sync(device)
+            latencies.append(time.perf_counter() - t0)
+
+        median_e2e = statistics.median(latencies)
+        p95_e2e = sorted(latencies)[max(0, int(len(latencies) * 0.95) - 1)]
+        fps = 1.0 / median_e2e if median_e2e > 0 else 0.0
+
+        results[f"e2e_{label}_median_sec"] = round(median_e2e, 4)
+        results[f"e2e_{label}_p95_sec"] = round(p95_e2e, 4)
+        results[f"e2e_{label}_fps"] = round(fps, 2)
+        print(f"  E2E ({label}): median={median_e2e:.4f}s  p95={p95_e2e:.4f}s  fps={fps:.2f}")
+
+    results["device"] = device_str
+    results["img_size"] = img_size
+    results["iterations"] = iterations
+
+    # Non-blocking delta
+    blocking_e2e = results["e2e_blocking_median_sec"]
+    nb_e2e = results["e2e_non_blocking_median_sec"]
+    if blocking_e2e > 0:
+        delta_pct = ((blocking_e2e - nb_e2e) / blocking_e2e) * 100
+        results["non_blocking_delta_pct"] = round(delta_pct, 2)
+        print(f"\n  non_blocking delta: {delta_pct:+.2f}% ({'faster' if delta_pct > 0 else 'slower/neutral'})")
+
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Markdown report
 # ---------------------------------------------------------------------------
 
@@ -380,6 +494,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--parity", action="store_true", help="Run parity check (CPU fp32 vs target)")
     parser.add_argument("--all", action="store_true", help="Run full benchmark matrix")
     parser.add_argument("--phase4", action="store_true", help="Phase 4 dtype audit: fp32 no-autocast, fp16, bf16 + parity")
+    parser.add_argument("--phase5", action="store_true", help="Phase 5 memory-traffic: non_blocking transfer + cpu().numpy() cost")
     parser.add_argument("--verbose", action="store_true", help="Per-iteration memory logging")
     parser.add_argument("--output", type=str, default=None, help="Write JSON results to file")
     return parser.parse_args()
@@ -410,7 +525,45 @@ def main() -> None:
             print(f"SKIPPED {dev}/{dt}: {exc}")
             return None
 
-    if args.phase4:
+    if args.phase5:
+        # Phase 5: memory-traffic / non_blocking transfer benchmark
+        if not _mps_available():
+            print("ERROR: Phase 5 requires MPS device")
+            sys.exit(1)
+        transfer_results = run_transfer_benchmark("mps", args.img_size, args.iterations or 20)
+        output_data = {"phase5_transfer": transfer_results}
+
+        report_lines = ["# Phase 5: Memory-Traffic Results\n"]
+        report_lines.append(f"**Device:** mps  **Size:** {args.img_size}  **Iters:** {transfer_results['iterations']}\n")
+        report_lines.append("## Transfer Costs\n")
+        report_lines.append("| Direction | Mode | Median (ms) | P95 (ms) |")
+        report_lines.append("|-----------|------|-------------|----------|")
+        report_lines.append(f"| CPU→MPS | blocking | {transfer_results['to_device_blocking_median_ms']} | {transfer_results['to_device_blocking_p95_ms']} |")
+        report_lines.append(f"| CPU→MPS | non_blocking | {transfer_results['to_device_non_blocking_median_ms']} | {transfer_results['to_device_non_blocking_p95_ms']} |")
+        report_lines.append(f"| MPS→CPU | .cpu().numpy() | {transfer_results['to_cpu_numpy_median_ms']} | {transfer_results['to_cpu_numpy_p95_ms']} |")
+        report_lines.append("")
+        report_lines.append("## End-to-End (fp16 autocast, includes transfers)\n")
+        report_lines.append("| Mode | Median (s) | P95 (s) | FPS | Delta |")
+        report_lines.append("|------|-----------|---------|-----|-------|")
+        delta = transfer_results.get("non_blocking_delta_pct", 0)
+        report_lines.append(f"| blocking | {transfer_results['e2e_blocking_median_sec']} | {transfer_results['e2e_blocking_p95_sec']} | {transfer_results['e2e_blocking_fps']} | baseline |")
+        report_lines.append(f"| non_blocking | {transfer_results['e2e_non_blocking_median_sec']} | {transfer_results['e2e_non_blocking_p95_sec']} | {transfer_results['e2e_non_blocking_fps']} | {delta:+.2f}% |")
+        report_lines.append("")
+
+        report = "\n".join(report_lines)
+        print(f"\n{report}")
+
+        if args.output:
+            output_path = Path(args.output)
+            output_path.write_text(json.dumps(output_data, indent=2))
+            print(f"Results written to {output_path}")
+        else:
+            default_path = PROJECT_ROOT / "scripts" / "phase5_results.json"
+            default_path.write_text(json.dumps(output_data, indent=2))
+            print(f"Results written to {default_path}")
+        return
+
+    elif args.phase4:
         # Phase 4 dtype audit matrix
         # (device, dtype, compile, no_autocast)
         configs = [
