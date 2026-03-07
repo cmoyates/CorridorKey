@@ -12,7 +12,7 @@ Hardware: Apple M3, MPS backend
 | 0 -- Baseline | 7.85s | 13.10s* | 32.23 GB | 30.95 GB | *Mean skewed by MPS shader compilation on frames 2-3 (30.8s, 76.4s) |
 | 1 -- FP16 weights | 5.70s | 5.66s | 25.02 GB | 23.90 GB | -7.21 GB mem, -27% time vs baseline |
 | 2 -- GPU math + caching | 5.42s | 5.51s | 26.10 GB | 24.98 GB | -6.13 GB mem, -31% time vs baseline; +1.08 GB vs P1 (GPU holds post-proc tensors) |
-| 3 -- Backbone 1024 | | | | | |
+| 3 -- Backbone 1024 | 1.53s | 1.53s | 8.18 GB | 7.06 GB | -80.5% time, -74.6% mem vs baseline; quality lossy w/o retrain |
 | 4 -- Tiled refiner | | | | | |
 
 ## Phase 0 -- Baseline (unoptimized)
@@ -141,3 +141,53 @@ Memory slightly higher than Phase 1 because GPU now holds post-processing tensor
 Quality diffs larger than Phase 1 due to Lanczos4→bicubic interpolation change (different algorithm, not just floating point ordering). FG channel most affected (3 channels of color data). However, pixels > 1e-2 remains near 0% across all channels — visually indistinguishable.
 
 **Note:** FG max err 0.083 exceeds plan's Phase 1-2 threshold of 0.04. This is cumulative: FP16 rounding (Phase 1) + Lanczos4→bicubic (Phase 2). The threshold assumed Phase 2 would only introduce "floating-point ordering differences" but the interpolation algorithm change is more significant. Practically lossless — 0.06% pixels > 1e-2 in FG, 0% elsewhere.
+
+## Phase 3 -- Backbone 1024
+
+**Date:** 2026-03-07
+**Commit:** 50dcd7b
+
+### Changes
+
+- `GreenFormer` accepts `backbone_size` param (default None = same as img_size)
+- Encoder initialized at `backbone_size` (1024); pos_embed resized during checkpoint loading
+- `forward()` downsamples input to 1024 before encoder, upsamples decoder outputs to full 2048
+- Refiner receives original full-res RGB + upsampled coarse predictions
+- `CorridorKeyEngine` passes `backbone_size` through to model
+- Benchmark script gains `--backbone-size` CLI arg
+
+### Timing
+
+| Metric | Value |
+|--------|-------|
+| Warmup (frame 1) | 1.62s |
+| Mean (excl. warmup) | 1.53s |
+| Median (excl. warmup) | 1.53s |
+| Stdev | 0.007s |
+| Min | 1.52s |
+| Max | 1.54s |
+
+5.3x faster than baseline, 3.5x faster than Phase 2. Backbone at 1024 processes 4x fewer tokens.
+
+### Memory (MPS unified)
+
+| Metric | Value | Delta vs Baseline | Delta vs Phase 2 |
+|--------|-------|-------------------|-------------------|
+| Before inference | 1.12 GB | -0.16 GB | 0 |
+| After inference | 8.18 GB | -24.05 GB (-74.6%) | -17.92 GB |
+| Delta | 7.06 GB | -23.89 GB | -17.92 GB |
+
+Massive reduction — backbone at 1024 uses ~2GB vs ~8GB at 2048 (4x fewer tokens = 4x less activation memory). Refiner at 2048 still contributes ~4GB.
+
+### Quality (vs Phase 0 Baseline)
+
+| Channel | MAE | Max Err | PSNR | Pixels > 1e-4 | Pixels > 1e-2 |
+|---------|-----|---------|------|---------------|---------------|
+| Alpha | 0.003336 | 0.9011 | 32.1 dB | 6.22% | 3.18% |
+| FG | 0.002658 | 0.7906 | 36.5 dB | 31.23% | 4.57% |
+| Processed | 0.001898 | 0.9011 | 37.2 dB | 22.18% | 3.18% |
+| Composite | 0.001515 | 0.3544 | 43.3 dB | 29.24% | 3.26% |
+
+Quality is lossy as expected — model was trained at 2048 and backbone now runs at 1024 without retraining. Alpha PSNR 32.1 dB and max err 0.90 exceed plan's lossy thresholds (PSNR > 40, max err < 0.02). The refiner compensates partially but can't fully recover fine detail lost by the coarser backbone.
+
+**Verdict:** Performance gains are exceptional (5.3x speed, 74.6% memory reduction). Quality requires retraining with mixed-resolution backbone to meet production thresholds. Viable as a "fast preview" mode without retraining.
