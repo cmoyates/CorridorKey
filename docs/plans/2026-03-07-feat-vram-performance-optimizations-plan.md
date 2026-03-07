@@ -8,7 +8,7 @@ date: 2026-03-07
 
 ## Overview
 
-Four-phase optimization plan targeting memory reduction and throughput improvement in the core CorridorKey inference pipeline. **Primary test target: MPS (Apple Silicon)**. CUDA compatibility maintained but not the primary validation environment. Scope is strictly `CorridorKeyModule/` and `clip_manager.py` — GVM and VideoMaMa untouched.
+Five-phase optimization plan (Phase 0-4) targeting memory reduction and throughput improvement in the core CorridorKey inference pipeline. Phase 0 establishes benchmarking infrastructure and baseline measurements; Phases 1-4 implement the actual optimizations. **Primary test target: MPS (Apple Silicon)**. CUDA compatibility maintained but not the primary validation environment. Scope is strictly `CorridorKeyModule/` and `clip_manager.py` — GVM and VideoMaMa untouched.
 
 ## Problem Statement
 
@@ -21,6 +21,220 @@ Current pain points at 2048x2048 inference:
 - **CNN Refiner 4GB spike** from processing full 2048x2048 in one shot
 
 ## Implementation Phases
+
+### Phase 0: Benchmarking Infrastructure & Baseline
+
+Set up all measurement tooling and capture unoptimized baseline *before* any code changes. This ensures every subsequent phase has a fixed reference point for time, memory, and pixel accuracy.
+
+#### 0a. Reference Clip Selection
+
+Designate a fixed sample clip (10-20 frames from a representative green screen shot) stored locally. Same clip used for every benchmark run — never change it mid-optimization. Ideally includes:
+- Fine detail (hair, transparent edges)
+- Solid green regions
+- Mixed lighting / shadow on green screen
+
+#### 0b. Benchmark Script
+
+Create `benchmarks/bench_phase.py` that measures three metrics per run:
+
+**1. Execution Time** — `time.perf_counter()` per `process_frame()` call:
+
+```python
+import time
+import statistics
+
+frame_times = []
+for frame in reference_frames:
+    t0 = time.perf_counter()
+    engine.process_frame(frame, ...)
+    t1 = time.perf_counter()
+    frame_times.append(t1 - t0)
+
+# Exclude first frame (warmup / compilation overhead)
+frame_times = frame_times[1:]
+print(f"Mean: {statistics.mean(frame_times):.3f}s")
+print(f"Median: {statistics.median(frame_times):.3f}s")
+print(f"Std: {statistics.stdev(frame_times):.4f}s")
+```
+
+**2. Memory Usage** — MPS unified memory (best available signal on M3):
+
+```python
+import torch
+
+torch.mps.empty_cache()
+mem_before = torch.mps.driver_allocated_size()
+
+engine.process_frame(frame, ...)
+
+mem_after = torch.mps.driver_allocated_size()
+
+print(f"Mem before: {mem_before / 1e9:.2f} GB")
+print(f"Mem after:  {mem_after / 1e9:.2f} GB")
+print(f"Delta:      {(mem_after - mem_before) / 1e9:.2f} GB")
+```
+
+For CUDA (when available): use `torch.cuda.max_memory_allocated()` and `torch.cuda.reset_peak_memory_stats()` for true peak tracking.
+
+**Note:** MPS unified memory numbers won't map 1:1 to discrete VRAM. The value is in tracking *relative* change between phases.
+
+**3. Pixel Difference from Baseline** — per-channel divergence report:
+
+```python
+import numpy as np
+
+def pixel_diff_report(baseline: np.ndarray, result: np.ndarray, label: str):
+    abs_diff = np.abs(baseline.astype(np.float64) - result.astype(np.float64))
+    max_err = abs_diff.max()
+    mae = abs_diff.mean()
+    pct_changed_1e4 = (abs_diff > 1e-4).mean() * 100
+    pct_changed_1e2 = (abs_diff > 1e-2).mean() * 100
+
+    print(f"[{label}] Max err: {max_err:.6f}, MAE: {mae:.6f}")
+    print(f"[{label}] Pixels > 1e-4: {pct_changed_1e4:.2f}%")
+    print(f"[{label}] Pixels > 1e-2: {pct_changed_1e2:.2f}%")
+```
+
+Run per output channel (alpha, FG R/G/B, processed RGBA).
+
+#### 0c. Baseline Capture
+
+Run the unoptimized pipeline on the reference clip. Save raw outputs as `.npy` (not EXR/PNG — avoid lossy format round-trips):
+
+```
+benchmarks/baseline/
+  frame_001_alpha.npy      # Linear alpha [H, W, 1]
+  frame_001_fg.npy         # sRGB FG [H, W, 3]
+  frame_001_processed.npy  # Linear premul RGBA [H, W, 4]
+  frame_001_comp.npy       # sRGB composite [H, W, 3]
+  timing.json              # Baseline timing results
+  memory.json              # Baseline memory measurements
+```
+
+These are the ground truth. Gitignored (too large for repo).
+
+#### 0d. Quality Gate Tests
+
+Create `tests/test_quality_gate.py` with per-channel validation:
+
+```python
+@pytest.fixture(scope="session")
+def baseline_outputs():
+    """Load pre-computed baseline .npy files."""
+    ...
+
+@pytest.fixture(scope="session")
+def current_outputs(engine):
+    """Run inference on same reference frames with current code."""
+    ...
+
+def test_alpha_pixel_diff(baseline_outputs, current_outputs):
+    """Alpha channel max/mean absolute error within threshold."""
+    ...
+
+def test_fg_pixel_diff(baseline_outputs, current_outputs):
+    """FG color per-channel max/mean absolute error within threshold."""
+    ...
+
+def test_processed_rgba_diff(baseline_outputs, current_outputs):
+    """Full pipeline RGBA output within threshold."""
+    ...
+
+def test_psnr(baseline_outputs, current_outputs):
+    """PSNR above minimum dB threshold."""
+    ...
+
+def test_ssim(baseline_outputs, current_outputs):
+    """SSIM above minimum structural similarity threshold."""
+    ...
+
+def test_color_space_integrity(current_outputs):
+    """FG values in valid sRGB range [0, 1]. Alpha in linear [0, 1]."""
+    ...
+
+def test_no_nan_or_inf(current_outputs):
+    """No NaN or Inf in any output channel."""
+    ...
+```
+
+Quality thresholds (per-phase):
+
+| Metric | Phase 1-2 (lossless) | Phase 3-4 (lossy) |
+|--------|---------------------|-------------------|
+| Max absolute error | `< 1e-4` | `< 0.02` |
+| MAE | `< 1e-5` | `< 0.005` |
+| PSNR | `> 80 dB` | `> 40 dB` |
+| SSIM | `> 0.9999` | `> 0.95` |
+
+Phase 1-2 thresholds tight because changes are **mathematically lossless**. Phase 3-4 relaxed — resolution decoupling and tiling introduce inherent approximation.
+
+#### 0e. Difference Visualization
+
+For any frame that fails thresholds, auto-generate a heat map:
+
+```python
+diff = np.abs(baseline - result)
+diff_vis = np.clip(diff * 10.0, 0.0, 1.0)  # Amplify 10x
+cv2.imwrite("diff_alpha.png", (diff_vis * 255).astype(np.uint8))
+```
+
+Makes subtle regressions (dark fringes, edge artifacts, tile seams) immediately visible.
+
+#### 0f. CLI Interface
+
+```bash
+# Generate baseline (run once before any changes)
+uv run python benchmarks/bench_phase.py --generate-baseline --clip <path_to_reference_clip>
+
+# Benchmark current phase against baseline
+uv run python benchmarks/bench_phase.py --clip <path_to_reference_clip> --baseline benchmarks/baseline/
+```
+
+#### 0g. Benchmark Results Table
+
+Maintain a running table updated after each phase:
+
+| Phase | Mean Frame Time | Δ Time vs Baseline | MPS Mem (post-inference) | Δ Mem vs Baseline | Pixels > 1e-4 (alpha) | Pixels > 1e-2 (alpha) | MAE (alpha) |
+|-------|----------------|-------------------|------------------------|-------------------|----------------------|----------------------|-------------|
+| 0 — Baseline (unoptimized) | — | — | — | — | 0% | 0% | 0.0 |
+| 1 — FP16 weights | | | | | | | |
+| 2 — GPU math + caching | | | | | | | |
+| 3 — Backbone 1024 | | | | | | | |
+| 4 — Tiled refiner | | | | | | | |
+
+#### 0h. Phase-Specific Quality Concerns
+
+| Phase | What could go wrong | How to catch it |
+|-------|-------------------|-----------------|
+| 1 (FP16) | Precision loss in low-alpha regions, dark fringe artifacts | Alpha channel MAE, check values near 0.0 and 1.0 specifically |
+| 2 (GPU math) | Floating-point ordering differences between NumPy and PyTorch | Should be negligible; tight thresholds will catch any drift |
+| 3 (Backbone 1024) | Loss of fine edge detail in coarse predictions, blockier alpha | SSIM on alpha edges, visual inspection of hair/fine detail |
+| 4 (Tiling) | Seam artifacts at tile boundaries, color discontinuities | Pixel diff specifically at tile boundary locations, SSIM per-tile-overlap-region |
+
+#### 0i. CI Integration
+
+- Quality gate tests marked `@pytest.mark.gpu` — skip in CI (no GPU), run locally before each phase merge
+- Baseline `.npy` files gitignored (too large) — generated locally via `--generate-baseline`
+- Lightweight CPU smoke test (tiny synthetic input, check no NaN/Inf/OOB) runs in CI
+
+### Acceptance Criteria — Phase 0
+
+- [ ] Reference clip selected and stored locally
+- [ ] `benchmarks/bench_phase.py` created with timing, memory, and pixel diff reporting
+- [ ] `tests/test_quality_gate.py` created with per-channel quality gates
+- [ ] Baseline `.npy` outputs captured (unoptimized pipeline)
+- [ ] Baseline timing and memory measurements recorded
+- [ ] Diff visualization generates heat maps for failures
+- [ ] Baseline `.npy` files added to `.gitignore`
+- [ ] All tests pass against the baseline (trivially — comparing to itself)
+
+### Important Caveats
+
+- **M3 unified memory:** Numbers reflect shared CPU/GPU pool, not dedicated VRAM. Useful for relative comparisons between phases, not absolute VRAM claims.
+- **Thermal throttling:** M3 may throttle on sustained runs. Use median over mean if variance is high. Run benchmarks with laptop plugged in, cooled, minimal background processes.
+- **First-frame warmup:** Exclude first frame from timing (MPS/CUDA compilation overhead).
+
+---
 
 ### Phase 1: "Free" VRAM & Overhead Fixes
 
@@ -56,8 +270,8 @@ model = model.half()
 - [ ] `model.half()` added after `load_state_dict` in `_load_model`
 - [ ] `@torch.no_grad()` confirmed on `process_frame`
 - [ ] Model set to inference mode confirmed in `_load_model`
-- [ ] Test script validates memory drop (MPS: `torch.mps.driver_allocated_size()`, CUDA: `torch.cuda.memory_allocated()`)
-- [ ] Output quality unchanged (pixel-diff test against reference frame)
+- [ ] Phase 0 benchmarks run — memory, timing, and pixel diff recorded in results table
+- [ ] Quality gate tests pass (lossless thresholds)
 
 ---
 
@@ -107,8 +321,8 @@ Currently recreated every frame:
 - [ ] `.cpu().numpy()` only called at end of `process_frame`
 - [ ] Checkerboard cached per resolution
 - [ ] Dilation kernel cached
-- [ ] Throughput improvement measured (frames/sec before vs after)
-- [ ] Output pixel-identical to Phase 1 baseline
+- [ ] Phase 0 benchmarks run — memory, timing, and pixel diff recorded in results table
+- [ ] Quality gate tests pass (lossless thresholds)
 
 ---
 
@@ -141,7 +355,8 @@ Currently recreated every frame:
 - [ ] `F.interpolate` downsamples to 1024 before encoder
 - [ ] Decoder outputs upsampled to original resolution
 - [ ] Refiner receives full-res RGB + upsampled coarse predictions
-- [ ] VRAM measured — expect ~6GB reduction
+- [ ] Phase 0 benchmarks run — memory, timing, and pixel diff recorded in results table
+- [ ] Quality gate tests pass (lossy thresholds)
 - [ ] Visual quality comparison (side-by-side with Phase 2 output)
 
 ---
@@ -181,122 +396,10 @@ weights_2d = np.outer(weights_1d, weights_1d)
 - [ ] Each tile processed individually, moved to CPU immediately
 - [ ] Device cache flushed after each tile (MPS/CUDA-aware)
 - [ ] Tent weight map blends seams in CPU accumulator
-- [ ] Peak VRAM during refiner pass measured — expect ~500MB vs ~4GB
+- [ ] Phase 0 benchmarks run — memory, timing, and pixel diff recorded in results table
+- [ ] Quality gate tests pass (lossy thresholds)
 - [ ] Visual comparison: no seam artifacts at tile boundaries
 - [ ] Edge case: non-2048 resolutions handled correctly
-
----
-
-## Quality Validation Strategy
-
-Every phase must prove it hasn't degraded output quality. We establish a baseline once, then gate each phase against it.
-
-### Baseline Capture (Pre-Phase 1)
-
-Before any changes, run inference on a small set of reference frames and save the raw outputs:
-
-```
-tests/fixtures/quality_baseline/
-  frame_001_alpha.npy      # Linear alpha [H, W, 1]
-  frame_001_fg.npy         # sRGB FG [H, W, 3]
-  frame_001_processed.npy  # Linear premul RGBA [H, W, 4]
-  frame_001_comp.npy       # sRGB composite [H, W, 3]
-```
-
-Use `.npy` (not EXR/PNG) to avoid lossy format round-trips. These are the ground truth.
-
-### Per-Phase Quality Gate
-
-Each phase runs the same reference frames and compares against baseline:
-
-#### Metrics
-
-| Metric | What it catches | Threshold |
-|--------|----------------|-----------|
-| **Max absolute error** | Catastrophic single-pixel blowups | Phase 1-2: `< 1e-4`, Phase 3-4: `< 0.02` |
-| **Mean absolute error (MAE)** | Systematic drift across the image | Phase 1-2: `< 1e-5`, Phase 3-4: `< 0.005` |
-| **PSNR** | Overall signal fidelity | Phase 1-2: `> 80 dB` (near-identical), Phase 3-4: `> 40 dB` |
-| **SSIM** | Structural/perceptual similarity | Phase 1-2: `> 0.9999`, Phase 3-4: `> 0.95` |
-
-Phase 1-2 thresholds are tight because these changes should be **mathematically lossless** (just FP16 casting and moving ops to GPU — same math, same precision). Phase 3-4 thresholds are relaxed because resolution decoupling and tiling introduce inherent approximation.
-
-#### Per-Channel Validation
-
-Don't just compare the final composite — validate each output channel independently:
-- **Alpha channel:** Most sensitive. Crushed shadows or inflated edges are immediately visible in compositing.
-- **FG color:** sRGB values. Check R, G, B channels separately — despill regressions show up as green channel drift.
-- **Processed RGBA:** Validates the full premultiply + despill + despeckle chain.
-
-#### Difference Visualization
-
-For any frame that fails thresholds, generate a heat map:
-```python
-diff = np.abs(baseline - result)
-# Amplify 10x for visibility, clamp to [0, 1]
-diff_vis = np.clip(diff * 10.0, 0.0, 1.0)
-cv2.imwrite("diff_alpha.png", (diff_vis * 255).astype(np.uint8))
-```
-
-This makes subtle regressions (dark fringes, edge artifacts, tile seams) immediately visible.
-
-### Test Script Structure
-
-```python
-# tests/test_quality_gate.py
-
-@pytest.fixture(scope="session")
-def baseline_outputs():
-    """Load pre-computed baseline .npy files."""
-    ...
-
-@pytest.fixture(scope="session")
-def current_outputs(engine):
-    """Run inference on same reference frames with current code."""
-    ...
-
-def test_alpha_pixel_diff(baseline_outputs, current_outputs):
-    """Alpha channel max/mean absolute error within threshold."""
-    ...
-
-def test_fg_pixel_diff(baseline_outputs, current_outputs):
-    """FG color per-channel max/mean absolute error within threshold."""
-    ...
-
-def test_processed_rgba_diff(baseline_outputs, current_outputs):
-    """Full pipeline RGBA output within threshold."""
-    ...
-
-def test_psnr(baseline_outputs, current_outputs):
-    """PSNR above minimum dB threshold."""
-    ...
-
-def test_ssim(baseline_outputs, current_outputs):
-    """SSIM above minimum structural similarity threshold."""
-    ...
-
-def test_color_space_integrity(current_outputs):
-    """FG values in valid sRGB range [0, 1]. Alpha in linear [0, 1]."""
-    ...
-
-def test_no_nan_or_inf(current_outputs):
-    """No NaN or Inf in any output channel."""
-    ...
-```
-
-### Phase-Specific Quality Concerns
-
-| Phase | What could go wrong | How to catch it |
-|-------|-------------------|-----------------|
-| 1 (FP16) | Precision loss in low-alpha regions, dark fringe artifacts | Alpha channel MAE, check values near 0.0 and 1.0 specifically |
-| 2 (GPU math) | Floating-point ordering differences between NumPy and PyTorch | Should be negligible; tight thresholds will catch any drift |
-| 3 (Backbone 1024) | Loss of fine edge detail in coarse predictions, blockier alpha | SSIM on alpha edges, visual inspection of hair/fine detail |
-| 4 (Tiling) | Seam artifacts at tile boundaries, color discontinuities | Pixel diff specifically at tile boundary locations, SSIM per-tile-overlap-region |
-
-### CI Integration
-
-- Quality gate tests marked `@pytest.mark.gpu` — skip in CI (no GPU), run locally before each phase merge
-- Baseline `.npy` files gitignored (too large) — generated locally via `pytest --generate-baseline`
-- A lightweight CPU smoke test (tiny synthetic input, check no NaN/Inf/OOB) runs in CI
 
 ---
 
