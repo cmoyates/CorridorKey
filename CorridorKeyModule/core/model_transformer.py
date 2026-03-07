@@ -146,12 +146,22 @@ class GreenFormer(nn.Module):
         img_size: int = 512,
         backbone_size: int | None = None,
         use_refiner: bool = True,
+        refiner_tile_size: int | None = None,
+        refiner_tile_overlap: int = 64,
     ) -> None:
         super().__init__()
 
         # Backbone resolution — None means same as img_size (no downsampling)
         self.backbone_size = backbone_size
         encoder_img_size = backbone_size or img_size
+
+        # Tiled refiner config — reduces peak VRAM by processing tiles sequentially
+        self.refiner_tile_size = refiner_tile_size
+        self.refiner_tile_overlap = refiner_tile_overlap
+        if refiner_tile_size is not None:
+            self._tent_weight = self._build_tent_weight(refiner_tile_size, refiner_tile_overlap)
+        else:
+            self._tent_weight = None
 
         # --- Encoder ---
         # Load Pretrained Hiera
@@ -240,6 +250,53 @@ class GreenFormer(nn.Module):
 
         print(f"Patched input layer: 3 channels -> {in_channels} channels (Extra initialized to 0)")
 
+    @staticmethod
+    def _build_tent_weight(tile_size: int, overlap: int) -> torch.Tensor:
+        """Build 2D tent (linear ramp) weight map for tile seam blending."""
+        ramp = torch.linspace(0, 1, overlap + 2)[1:-1]  # (0, 1) exclusive
+        center = torch.ones(tile_size - 2 * overlap)
+        w1d = torch.cat([ramp, center, ramp.flip(0)])
+        return (w1d.unsqueeze(1) * w1d.unsqueeze(0)).unsqueeze(0).unsqueeze(0)  # [1, 1, ts, ts]
+
+    def _tiled_refine(self, rgb: torch.Tensor, coarse_pred: torch.Tensor) -> torch.Tensor:
+        """Run refiner in tiles to reduce peak VRAM. Blends overlaps with tent weights."""
+        tile_size = self.refiner_tile_size
+        overlap = self.refiner_tile_overlap
+        stride = tile_size - overlap
+        _, _, h, w = rgb.shape
+        device = rgb.device
+
+        # CPU accumulators — tiles offloaded immediately to save VRAM
+        output_acc = torch.zeros(1, 4, h, w, dtype=torch.float32)
+        weight_acc = torch.zeros(1, 1, h, w, dtype=torch.float32)
+        tent = self._tent_weight  # [1, 1, tile_size, tile_size]
+
+        def _starts(length: int) -> list[int]:
+            """Tile start positions — last tile end-aligns with image edge."""
+            s = list(range(0, length - tile_size + 1, stride))
+            if not s or s[-1] + tile_size < length:
+                s.append(length - tile_size)
+            return sorted(set(s))
+
+        for y in _starts(h):
+            for x in _starts(w):
+                rgb_tile = rgb[:, :, y : y + tile_size, x : x + tile_size]
+                coarse_tile = coarse_pred[:, :, y : y + tile_size, x : x + tile_size]
+
+                delta = self.refiner(rgb_tile, coarse_tile)
+                delta_cpu = delta.cpu().float()
+
+                output_acc[:, :, y : y + tile_size, x : x + tile_size] += delta_cpu * tent
+                weight_acc[:, :, y : y + tile_size, x : x + tile_size] += tent
+
+                del delta, rgb_tile, coarse_tile
+                if device.type == "cuda":
+                    torch.cuda.empty_cache()
+                elif device.type == "mps":
+                    torch.mps.empty_cache()
+
+        return (output_acc / weight_acc.clamp(min=1e-8)).to(device)
+
     def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
         # x: [B, 4, H, W]
         input_size = x.shape[2:]
@@ -289,7 +346,13 @@ class GreenFormer(nn.Module):
         # Refiner outputs DELTA LOGITS
         # The refiner predicts the correction in valid score space (-inf, inf)
         if self.use_refiner and self.refiner is not None:
-            delta_logits = self.refiner(rgb, coarse_pred)
+            use_tiling = self.refiner_tile_size is not None and (
+                input_size[0] > self.refiner_tile_size or input_size[1] > self.refiner_tile_size
+            )
+            if use_tiling:
+                delta_logits = self._tiled_refine(rgb, coarse_pred)
+            else:
+                delta_logits = self.refiner(rgb, coarse_pred)
         else:
             # Zero Deltas
             delta_logits = torch.zeros_like(coarse_pred)

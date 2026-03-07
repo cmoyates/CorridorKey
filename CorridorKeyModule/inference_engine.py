@@ -20,12 +20,16 @@ class CorridorKeyEngine:
         img_size: int = 2048,
         backbone_size: int | None = None,
         use_refiner: bool = True,
+        refiner_tile_size: int | None = 512,
+        refiner_tile_overlap: int = 64,
     ) -> None:
         self.device = torch.device(device)
         self.img_size = img_size
         self.backbone_size = backbone_size
         self.checkpoint_path = checkpoint_path
         self.use_refiner = use_refiner
+        self.refiner_tile_size = refiner_tile_size
+        self.refiner_tile_overlap = refiner_tile_overlap
 
         self.mean = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(1, 1, 3)
         self.std = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(1, 1, 3)
@@ -44,6 +48,8 @@ class CorridorKeyEngine:
             img_size=self.img_size,
             backbone_size=self.backbone_size,
             use_refiner=self.use_refiner,
+            refiner_tile_size=self.refiner_tile_size,
+            refiner_tile_overlap=self.refiner_tile_overlap,
         )
         model = model.to(self.device)
         model.eval()
