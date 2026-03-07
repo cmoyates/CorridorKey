@@ -206,15 +206,15 @@ The `ClipManager` passes frame sources (video cap or file list) and output dirs.
 
 ### Acceptance Criteria -- Phase 7
 
-- [ ] `InferenceRingBuffer` with 3 pinned CPU slots
-- [ ] `AsyncFramePipeline` with read/write thread pools
-- [ ] CUDA stream isolation (compute + copy streams)
-- [ ] MPS graceful fallback (single stream, still async I/O)
-- [ ] Pipeline warmup (2-frame fill) and drain (wait for final write)
-- [ ] Error handling for corrupt/missing frames
+- [x] `InferenceRingBuffer` with 3 pinned CPU slots
+- [x] `AsyncFramePipeline` with read/write thread pools
+- [x] CUDA stream isolation (compute + copy streams)
+- [x] MPS graceful fallback (single stream, still async I/O)
+- [x] Pipeline warmup (2-frame fill) and drain (wait for final write)
+- [x] Error handling for corrupt/missing frames
 - [ ] Benchmark: wall-clock improvement over sequential loop
-- [ ] No race conditions (frame ordering preserved)
-- [ ] CLI flag `--async-pipeline / --no-async-pipeline` (default: on)
+- [x] No race conditions (frame ordering preserved)
+- [x] CLI flag `--async-pipeline / --no-async-pipeline` (default: on)
 
 ### Phase 7 Risks
 

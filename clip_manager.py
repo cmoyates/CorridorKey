@@ -505,6 +505,7 @@ def run_inference(
     fp16=True,
     gpu_postprocess=True,
     sparse_refiner=True,
+    async_pipeline=True,
 ):
     ready_clips = [c for c in clips if c.input_asset and c.alpha_asset]
 
@@ -587,6 +588,23 @@ def run_inference(
         sparse_refiner=sparse_refiner,
     )
 
+    # EXR compression params (shared across all frames)
+    exr_flags = [
+        cv2.IMWRITE_EXR_TYPE,
+        cv2.IMWRITE_EXR_TYPE_HALF,
+        cv2.IMWRITE_EXR_COMPRESSION,
+        cv2.IMWRITE_EXR_COMPRESSION_PXR24,
+    ]
+
+    process_frame_kwargs = {
+        "input_is_linear": user_input_is_linear,
+        "fg_is_straight": True,
+        "despill_strength": despill_strength,
+        "auto_despeckle": auto_despeckle,
+        "despeckle_size": despeckle_size,
+        "refiner_scale": refiner_scale,
+    }
+
     for clip in ready_clips:
         logger.info(f"Running Inference on: {clip.name}")
 
@@ -612,21 +630,71 @@ def run_inference(
             logger.warning(f"Clip '{clip.name}': 0 frames to process, skipping.")
             continue
 
-        input_cap = None
-        alpha_cap = None
+        # Build frame sources
         input_files = []
         alpha_files = []
-
-        if clip.input_asset.type == "video":
-            input_cap = cv2.VideoCapture(clip.input_asset.path)
-        else:
+        if clip.input_asset.type != "video":
             input_files = sorted([f for f in os.listdir(clip.input_asset.path) if is_image_file(f)])
-
-        if clip.alpha_asset.type == "video":
-            alpha_cap = cv2.VideoCapture(clip.alpha_asset.path)
-        else:
+        if clip.alpha_asset.type != "video":
             alpha_files = sorted([f for f in os.listdir(clip.alpha_asset.path) if is_image_file(f)])
 
+        output_dirs = {"fg": fg_dir, "matte": matte_dir, "comp": comp_dir, "proc": proc_dir}
+
+        if async_pipeline:
+            import torch
+
+            from CorridorKeyModule.pipeline import AsyncFramePipeline, FrameSource
+
+            input_src = FrameSource(
+                type=clip.input_asset.type,
+                path=clip.input_asset.path,
+                files=input_files,
+            )
+            alpha_src = FrameSource(
+                type=clip.alpha_asset.type,
+                path=clip.alpha_asset.path,
+                files=alpha_files,
+            )
+
+            pipeline = AsyncFramePipeline(
+                engine=engine,
+                img_size=engine.img_size if hasattr(engine, "img_size") else 2048,
+                device=torch.device(device) if isinstance(device, str) else (device or torch.device("cpu")),
+                process_frame_kwargs=process_frame_kwargs,
+            )
+            pipeline.process_clip(
+                input_source=input_src,
+                alpha_source=alpha_src,
+                output_dirs=output_dirs,
+                num_frames=num_frames,
+                input_is_linear=user_input_is_linear,
+                exr_flags=exr_flags,
+                mean=engine.mean if hasattr(engine, "mean") else np.array([0.485, 0.456, 0.406]).reshape(1, 1, 3),
+                std=engine.std if hasattr(engine, "std") else np.array([0.229, 0.224, 0.225]).reshape(1, 1, 3),
+            )
+        else:
+            _run_inference_sequential(
+                engine, clip, input_files, alpha_files, output_dirs,
+                num_frames, user_input_is_linear, exr_flags, process_frame_kwargs,
+            )
+
+        logger.info(f"Clip {clip.name} Complete.")
+
+
+def _run_inference_sequential(
+    engine, clip, input_files, alpha_files, output_dirs,
+    num_frames, user_input_is_linear, exr_flags, process_frame_kwargs,
+):
+    """Original sequential frame loop — fallback when async pipeline is disabled."""
+    input_cap = None
+    alpha_cap = None
+
+    if clip.input_asset.type == "video":
+        input_cap = cv2.VideoCapture(clip.input_asset.path)
+    if clip.alpha_asset.type == "video":
+        alpha_cap = cv2.VideoCapture(clip.alpha_asset.path)
+
+    try:
         for i in range(num_frames):
             if i % 10 == 0:
                 print(f"  Frame {i}/{num_frames}...", end="\r")
@@ -635,16 +703,12 @@ def run_inference(
             img_srgb = None
             input_stem = f"{i:05d}"
 
-            # Use the user-defined gamma
-            input_is_linear = user_input_is_linear
-
             if input_cap:
                 ret, frame = input_cap.read()
                 if not ret:
                     break
                 img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 img_srgb = img_rgb.astype(np.float32) / 255.0
-                input_stem = f"{i:05d}"
             else:
                 fpath = os.path.join(clip.input_asset.path, input_files[i])
                 input_stem = os.path.splitext(input_files[i])[0]
@@ -655,7 +719,6 @@ def run_inference(
                     if img_linear is None:
                         continue
                     img_linear_rgb = cv2.cvtColor(img_linear, cv2.COLOR_BGR2RGB)
-                    # Support overriding EXR behavior if user picked 's'
                     img_srgb = np.maximum(img_linear_rgb, 0.0)
                 else:
                     img_bgr = cv2.imread(fpath)
@@ -699,63 +762,34 @@ def run_inference(
                 )
 
             # 3. Process
-            USE_STRAIGHT_MODEL = True
-            res = engine.process_frame(
-                img_srgb,
-                mask_linear,
-                input_is_linear=input_is_linear,
-                fg_is_straight=USE_STRAIGHT_MODEL,
-                despill_strength=despill_strength,
-                auto_despeckle=auto_despeckle,
-                despeckle_size=despeckle_size,
-                refiner_scale=refiner_scale,
-            )
+            res = engine.process_frame(img_srgb, mask_linear, **process_frame_kwargs)
 
-            pred_fg = res["fg"]  # sRGB
-            pred_alpha = res["alpha"]  # Linear
+            pred_fg = res["fg"]
+            pred_alpha = res["alpha"]
 
-            # 4. Save (EXR DWAB Half-Float)
-
-            # Compression Params
-            exr_flags = [
-                cv2.IMWRITE_EXR_TYPE,
-                cv2.IMWRITE_EXR_TYPE_HALF,
-                # DWAB fails. PXR24 verified as smallest working format (46KB vs ZIP 56KB vs B44A 688KB)
-                cv2.IMWRITE_EXR_COMPRESSION,
-                cv2.IMWRITE_EXR_COMPRESSION_PXR24,
-            ]
-
-            # Save FG
-            # pred_fg is RGB 0-1 float. Convert to BGR for OpenCV
+            # 4. Save outputs
             fg_bgr = cv2.cvtColor(pred_fg, cv2.COLOR_RGB2BGR)
-            cv2.imwrite(os.path.join(fg_dir, f"{input_stem}.exr"), fg_bgr, exr_flags)
+            cv2.imwrite(os.path.join(output_dirs["fg"], f"{input_stem}.exr"), fg_bgr, exr_flags)
 
-            # Save Matte
             if pred_alpha.ndim == 3:
                 pred_alpha = pred_alpha[:, :, 0]
-            # Matte is single channel linear float
-            cv2.imwrite(os.path.join(matte_dir, f"{input_stem}.exr"), pred_alpha, exr_flags)
+            cv2.imwrite(os.path.join(output_dirs["matte"], f"{input_stem}.exr"), pred_alpha, exr_flags)
 
-            # 5. Generate Reference Comp
             comp_srgb = res["comp"]
-            # Save Comp (PNG 8-bit)
             comp_bgr = cv2.cvtColor((np.clip(comp_srgb, 0.0, 1.0) * 255.0).astype(np.uint8), cv2.COLOR_RGB2BGR)
-            cv2.imwrite(os.path.join(comp_dir, f"{input_stem}.png"), comp_bgr)
+            cv2.imwrite(os.path.join(output_dirs["comp"], f"{input_stem}.png"), comp_bgr)
 
-            # 6. Save Processed (RGBA EXR)
             if "processed" in res:
-                # Result is RGBA
                 proc_rgba = res["processed"]
-                # Convert to BGRA for OpenCV
                 proc_bgra = cv2.cvtColor(proc_rgba, cv2.COLOR_RGBA2BGRA)
-                cv2.imwrite(os.path.join(proc_dir, f"{input_stem}.exr"), proc_bgra, exr_flags)
+                cv2.imwrite(os.path.join(output_dirs["proc"], f"{input_stem}.exr"), proc_bgra, exr_flags)
 
         print("")
+    finally:
         if input_cap:
             input_cap.release()
         if alpha_cap:
             alpha_cap.release()
-        logger.info(f"Clip {clip.name} Complete.")
 
 
 def organize_target(target_dir: str) -> None:
@@ -939,6 +973,18 @@ if __name__ == "__main__":
         "--refiner-tile-size", type=int, default=512, help="Refiner tile size (0 = disabled, default 512)"
     )
     parser.add_argument("--refiner-tile-overlap", type=int, default=96, help="Refiner tile overlap pixels (default 96)")
+    parser.add_argument(
+        "--sparse-refiner",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Skip refiner tiles with no edge pixels (default on)",
+    )
+    parser.add_argument(
+        "--async-pipeline",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Overlap I/O with inference via triple-buffered pipeline (default on)",
+    )
 
     args = parser.parse_args()
 
@@ -964,6 +1010,8 @@ if __name__ == "__main__":
             refiner_tile_overlap=args.refiner_tile_overlap,
             fp16=args.fp16,
             gpu_postprocess=args.gpu_postprocess,
+            sparse_refiner=args.sparse_refiner,
+            async_pipeline=args.async_pipeline,
         )
     elif args.action == "wizard":
         if not args.win_path:
