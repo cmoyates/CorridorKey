@@ -65,6 +65,8 @@ def _prompt_optimization_preset() -> dict:
         "sparse_refiner": True,
         "async_pipeline": True,
         "compile_model": False,
+        "temporal": False,
+        "keyframe_interval": None,
     }
     presets = {
         "1": {**_base, "backbone_size": None, "refiner_tile_size": 512},
@@ -79,6 +81,8 @@ def _prompt_optimization_preset() -> dict:
             "sparse_refiner": False,
             "async_pipeline": False,
             "compile_model": False,
+            "temporal": False,
+            "keyframe_interval": None,
         },
     }
 
@@ -112,6 +116,13 @@ def _prompt_custom_optimizations() -> dict:
     sparse_refiner = input("  Sparse refiner (skip BG/FG tiles)? [Y/n]: ").strip().lower() != "n"
     async_pipeline = input("  Async I/O pipeline (triple buffering)? [Y/n]: ").strip().lower() != "n"
     compile_model = input("  torch.compile (graph fusion, slower first frame)? [y/N]: ").strip().lower() == "y"
+    temporal = input("  Temporal coherence (warp features on non-keyframes)? [y/N]: ").strip().lower() == "y"
+
+    keyframe_interval = None
+    if temporal:
+        kf_val = input("  Keyframe interval (blank = auto from clip length, max 10): ").strip()
+        if kf_val:
+            keyframe_interval = max(2, int(kf_val))
 
     return {
         "fp16": fp16,
@@ -122,6 +133,8 @@ def _prompt_custom_optimizations() -> dict:
         "sparse_refiner": sparse_refiner,
         "async_pipeline": async_pipeline,
         "compile_model": compile_model,
+        "temporal": temporal,
+        "keyframe_interval": keyframe_interval,
     }
 
 
@@ -400,6 +413,18 @@ def main() -> None:
         default=False,
         help="torch.compile graph fusion — slower first frame, faster subsequent (default off)",
     )
+    parser.add_argument(
+        "--temporal",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Temporal coherence: warp cached features on non-keyframes (default off)",
+    )
+    parser.add_argument(
+        "--keyframe-interval",
+        type=int,
+        default=None,
+        help="Keyframe interval for temporal mode (default: auto-derived from clip length, max 10)",
+    )
 
     args = parser.parse_args()
 
@@ -427,6 +452,8 @@ def main() -> None:
                 sparse_refiner=args.sparse_refiner,
                 async_pipeline=args.async_pipeline,
                 compile_model=getattr(args, "compile", False),
+                temporal=args.temporal,
+                keyframe_interval=args.keyframe_interval,
             )
         elif args.action == "wizard":
             if not args.win_path:

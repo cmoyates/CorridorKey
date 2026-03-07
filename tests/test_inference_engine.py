@@ -45,6 +45,8 @@ def _make_engine_with_mock(mock_greenformer, img_size=64):
     engine.refiner_tile_size = None
     engine.refiner_tile_overlap = 96
     engine.compile_model = False
+    engine.temporal = False
+    engine.temporal_cache = None
     engine.model = mock_greenformer
     return engine
 

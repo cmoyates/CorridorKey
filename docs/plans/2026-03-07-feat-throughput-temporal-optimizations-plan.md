@@ -479,15 +479,15 @@ Plus RAFT small weights: ~5 MB. Plus previous frame: ~12 MB (1024x1024 FP16).
 
 ### Acceptance Criteria -- Phase 9
 
-- [ ] `TemporalCache` class with keyframe interval + cached features
-- [ ] `FlowEstimator` wrapping RAFT small (or Farneback fallback)
-- [ ] `warp_features()` correctly warps multi-scale features with grid_sample
-- [ ] `GreenFormer.forward()` supports temporal cache path
-- [ ] `clip_manager.py` frame loop passes temporal cache between frames
-- [ ] Adaptive keyframe triggers (scene cut, large motion)
+- [x] `TemporalCache` class with keyframe interval + cached features
+- [x] `FlowEstimator` wrapping RAFT small (or Farneback fallback)
+- [x] `warp_features()` correctly warps multi-scale features with grid_sample
+- [x] `GreenFormer.forward()` supports temporal cache path
+- [x] `clip_manager.py` frame loop passes temporal cache between frames
+- [x] Adaptive keyframe triggers (scene cut, large motion)
 - [ ] Benchmark: frames/second on video with various keyframe intervals
 - [ ] Quality comparison: warped-frame output vs full-inference output (PSNR, SSIM)
-- [ ] CLI flags: `--temporal / --no-temporal`, `--keyframe-interval <int>`
+- [x] CLI flags: `--temporal / --no-temporal`, `--keyframe-interval <int>`
 - [ ] Temporal flickering assessment (visual inspection of video output)
 
 ### Phase 9 Risks

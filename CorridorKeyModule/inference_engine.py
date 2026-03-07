@@ -26,6 +26,8 @@ class CorridorKeyEngine:
         gpu_postprocess: bool = True,
         sparse_refiner: bool = True,
         compile_model: bool = False,
+        temporal: bool = False,
+        keyframe_interval: int = 10,
     ) -> None:
         self.device = torch.device(device)
         self.img_size = img_size
@@ -38,6 +40,8 @@ class CorridorKeyEngine:
         self.gpu_postprocess = gpu_postprocess
         self.sparse_refiner = sparse_refiner
         self.compile_model = compile_model
+        self.temporal = temporal
+        self.keyframe_interval = keyframe_interval
 
         self.mean = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(1, 1, 3)
         self.std = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(1, 1, 3)
@@ -47,6 +51,17 @@ class CorridorKeyEngine:
         self._checker_cache_key: tuple[int, int] = (0, 0)
 
         self.model = self._load_model()
+
+        # Temporal coherence: feature caching + flow warping
+        self.temporal_cache = None
+        if self.temporal:
+            from .temporal import FlowEstimator, TemporalCache
+
+            flow_estimator = FlowEstimator(self.device)
+            self.temporal_cache = TemporalCache(
+                keyframe_interval=self.keyframe_interval,
+                flow_estimator=flow_estimator,
+            )
 
     def _load_model(self) -> GreenFormer:
         print(f"Loading CorridorKey from {self.checkpoint_path}...")
@@ -241,7 +256,10 @@ class CorridorKeyEngine:
             handle = self.model.refiner.register_forward_hook(scale_hook)
 
         with torch.autocast(device_type=self.device.type, dtype=torch.float16):
-            out = self.model(inp_t)
+            out = self.model(inp_t, temporal_cache=self.temporal_cache)
+
+        if self.temporal_cache is not None:
+            self.temporal_cache.advance()
 
         if handle:
             handle.remove()

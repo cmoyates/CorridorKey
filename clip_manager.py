@@ -507,6 +507,8 @@ def run_inference(
     sparse_refiner=True,
     async_pipeline=True,
     compile_model=False,
+    temporal=False,
+    keyframe_interval=None,
 ):
     ready_clips = [c for c in clips if c.input_asset and c.alpha_asset]
 
@@ -578,6 +580,16 @@ def run_inference(
         device = resolve_device()
     from CorridorKeyModule.backend import create_engine
 
+    # Derive keyframe interval from first clip if auto (None)
+    if temporal and keyframe_interval is None:
+        from CorridorKeyModule.temporal import derive_keyframe_interval
+
+        representative_length = max(c.input_asset.frame_count for c in ready_clips)
+        keyframe_interval = derive_keyframe_interval(representative_length)
+        logger.info(f"Auto-derived keyframe interval: {keyframe_interval} (from {representative_length} frames)")
+    elif keyframe_interval is None:
+        keyframe_interval = 10  # default, unused when temporal=False
+
     engine = create_engine(
         backend=backend,
         device=device,
@@ -588,6 +600,8 @@ def run_inference(
         gpu_postprocess=gpu_postprocess,
         sparse_refiner=sparse_refiner,
         compile_model=compile_model,
+        temporal=temporal,
+        keyframe_interval=keyframe_interval,
     )
 
     # EXR compression params (shared across all frames)
@@ -609,6 +623,10 @@ def run_inference(
 
     for clip in ready_clips:
         logger.info(f"Running Inference on: {clip.name}")
+
+        # Reset temporal cache between clips
+        if hasattr(engine, "temporal_cache") and engine.temporal_cache is not None:
+            engine.temporal_cache.reset()
 
         # Setup Outputs in ClipFolder/Output/...
         clip_out_root = os.path.join(clip.root_path, "Output")
@@ -1001,6 +1019,18 @@ if __name__ == "__main__":
         default=True,
         help="Overlap I/O with inference via triple-buffered pipeline (default on)",
     )
+    parser.add_argument(
+        "--temporal",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Temporal coherence: warp cached features on non-keyframes (default off)",
+    )
+    parser.add_argument(
+        "--keyframe-interval",
+        type=int,
+        default=None,
+        help="Keyframe interval for temporal mode (default: auto-derived from clip length, max 10)",
+    )
 
     args = parser.parse_args()
 
@@ -1028,6 +1058,8 @@ if __name__ == "__main__":
             gpu_postprocess=args.gpu_postprocess,
             sparse_refiner=args.sparse_refiner,
             async_pipeline=args.async_pipeline,
+            temporal=args.temporal,
+            keyframe_interval=args.keyframe_interval,
         )
     elif args.action == "wizard":
         if not args.win_path:

@@ -213,6 +213,8 @@ def create_engine(
     gpu_postprocess: bool = True,
     sparse_refiner: bool = True,
     compile_model: bool = False,
+    temporal: bool = False,
+    keyframe_interval: int = 10,
 ):
     """Factory: returns an engine with process_frame() matching the Torch contract."""
     backend = resolve_backend(backend)
@@ -240,4 +242,6 @@ def create_engine(
             gpu_postprocess=gpu_postprocess,
             sparse_refiner=sparse_refiner,
             compile_model=compile_model,
+            temporal=temporal,
+            keyframe_interval=keyframe_interval,
         )

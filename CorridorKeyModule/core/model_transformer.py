@@ -329,7 +329,7 @@ class GreenFormer(nn.Module):
 
         return (output_acc / weight_acc).to(device)
 
-    def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+    def forward(self, x: torch.Tensor, temporal_cache=None) -> dict[str, torch.Tensor]:
         # x: [B, 4, H, W]
         input_size = x.shape[2:]
 
@@ -343,8 +343,27 @@ class GreenFormer(nn.Module):
         else:
             x_backbone = x
 
-        # Encode (at backbone resolution)
-        features = self.encoder(x_backbone)  # Returns list of features
+        # RGB at backbone resolution for flow estimation
+        rgb_backbone = x_backbone[:, :3]
+
+        # Temporal path: skip backbone on non-keyframes by warping cached features
+        run_backbone = True
+        if temporal_cache is not None and not temporal_cache.is_keyframe():
+            from ..temporal import warp_features
+
+            flow = temporal_cache.flow_estimator.estimate(temporal_cache.cached_frame, rgb_backbone)
+
+            if temporal_cache.should_force_keyframe(flow, temporal_cache.cached_frame, rgb_backbone):
+                run_backbone = True  # Adaptive trigger — fall through to full backbone
+            else:
+                features = warp_features(temporal_cache.cached_features, flow)
+                run_backbone = False
+
+        if run_backbone:
+            # Encode (at backbone resolution)
+            features = self.encoder(x_backbone)  # Returns list of features
+            if temporal_cache is not None:
+                temporal_cache.update_cache(features, rgb_backbone)
 
         # Decode Streams
         alpha_logits = self.alpha_decoder(features)  # [B, 1, H/4, W/4]
