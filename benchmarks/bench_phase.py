@@ -112,7 +112,12 @@ def find_checkpoint() -> str:
     raise FileNotFoundError("No .pth checkpoint found in CorridorKeyModule/checkpoints/ or IgnoredCheckpoints/")
 
 
-def create_engine(device: str, checkpoint: str | None = None, backbone_size: int | None = None):
+def create_engine(
+    device: str,
+    checkpoint: str | None = None,
+    backbone_size: int | None = None,
+    refiner_tile_size: int | None = 512,
+):
     """Create a CorridorKeyEngine instance."""
     from CorridorKeyModule.inference_engine import CorridorKeyEngine
 
@@ -121,7 +126,9 @@ def create_engine(device: str, checkpoint: str | None = None, backbone_size: int
     print(f"Checkpoint: {os.path.basename(ckpt)}")
     if backbone_size:
         print(f"Backbone size: {backbone_size}")
-    return CorridorKeyEngine(ckpt, device=device, backbone_size=backbone_size)
+    if refiner_tile_size:
+        print(f"Refiner tile size: {refiner_tile_size}")
+    return CorridorKeyEngine(ckpt, device=device, backbone_size=backbone_size, refiner_tile_size=refiner_tile_size)
 
 
 # ---------------------------------------------------------------------------
@@ -404,11 +411,18 @@ def main():
     parser.add_argument(
         "--backbone-size", type=int, default=None, help="Backbone resolution (e.g. 1024). None = same as img_size"
     )
+    parser.add_argument(
+        "--refiner-tile-size",
+        type=int,
+        default=512,
+        help="Refiner tile size (default 512). 0 to disable tiling",
+    )
 
     args = parser.parse_args()
 
     device = args.device or get_device()
-    engine = create_engine(device, args.checkpoint, backbone_size=args.backbone_size)
+    tile_size = args.refiner_tile_size or None  # 0 -> None (disabled)
+    engine = create_engine(device, args.checkpoint, backbone_size=args.backbone_size, refiner_tile_size=tile_size)
 
     # Load frames
     frames = load_video_frames(args.clip, max_frames=args.max_frames)

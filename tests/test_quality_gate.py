@@ -307,6 +307,85 @@ class TestOutputIntegrity:
 # ---------------------------------------------------------------------------
 
 
+class TestTiledRefiner:
+    """Verify tiled refiner produces same output as single-pass refiner."""
+
+    @staticmethod
+    def _make_tiling_harness(refiner, tile_size, overlap):
+        """Create a minimal object with _tiled_refine capability."""
+        from CorridorKeyModule.core.model_transformer import GreenFormer
+
+        class _TileHarness:
+            pass
+
+        h = _TileHarness()
+        h.refiner = refiner
+        h.refiner_tile_size = tile_size
+        h.refiner_tile_overlap = overlap
+        h._tent_weight = GreenFormer._build_tent_weight(tile_size, overlap)
+        h._tiled_refine = GreenFormer._tiled_refine.__get__(h)
+        return h
+
+    def test_tiled_vs_single_pass(self):
+        """Tiled refiner with tent blending matches single-pass output closely."""
+        import torch
+
+        from CorridorKeyModule.core.model_transformer import CNNRefinerModule
+
+        tile_size = 32
+        overlap = 8
+        img_size = 64
+
+        torch.manual_seed(42)
+        refiner = CNNRefinerModule(in_channels=7, hidden_channels=16, out_channels=4)
+        refiner.eval()
+
+        rgb = torch.randn(1, 3, img_size, img_size)
+        coarse = torch.randn(1, 4, img_size, img_size)
+
+        with torch.no_grad():
+            ref = refiner(rgb, coarse)
+
+        harness = self._make_tiling_harness(refiner, tile_size, overlap)
+
+        with torch.no_grad():
+            tiled = harness._tiled_refine(rgb, coarse)
+
+        diff = (ref - tiled).abs()
+        assert diff.max().item() < 0.5, f"Max diff {diff.max().item():.4f} too large"
+        assert diff.mean().item() < 0.05, f"Mean diff {diff.mean().item():.6f} too large"
+
+    def test_tiled_no_nan(self):
+        """Tiled refiner produces no NaN/Inf."""
+        import torch
+
+        from CorridorKeyModule.core.model_transformer import CNNRefinerModule
+
+        torch.manual_seed(123)
+        refiner = CNNRefinerModule(in_channels=7, hidden_channels=16, out_channels=4)
+        refiner.eval()
+
+        harness = self._make_tiling_harness(refiner, 32, 8)
+
+        rgb = torch.randn(1, 3, 96, 96)
+        coarse = torch.randn(1, 4, 96, 96)
+
+        with torch.no_grad():
+            result = harness._tiled_refine(rgb, coarse)
+
+        assert torch.isfinite(result).all(), "Tiled refiner produced NaN/Inf"
+
+    def test_tent_weight_shape(self):
+        """Tent weight has correct shape and valid range."""
+        from CorridorKeyModule.core.model_transformer import GreenFormer
+
+        tent = GreenFormer._build_tent_weight(512, 64)
+        assert tent.shape == (1, 1, 512, 512)
+        assert tent.min() > 0, "Tent weight should be strictly positive"
+        assert tent.max() <= 1.0, "Tent weight should not exceed 1.0"
+        assert tent[0, 0, 256, 256] == 1.0
+
+
 class TestSmokeNoBoom:
     """Minimal sanity check with synthetic input. No GPU or model weights."""
 
