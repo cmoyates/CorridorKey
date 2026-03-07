@@ -203,7 +203,7 @@ Maintain a running table updated after each phase:
 | 0 — Baseline (unoptimized) | — | — | — | — | 0% | 0% | 0.0 |
 | 1 — FP16 weights | 5.701s | -27.3% | 25.02 GB | -7.21 GB | 1.55% | 0.00% | 0.000007 |
 | 2 — GPU math + caching | 5.42s | -30.9% | 26.10 GB | -6.13 GB | 2.77% | 0.01% | 0.000041 |
-| 3 — Backbone 1024 | | | | | | | |
+| 3 — Backbone 1024 | 1.53s | -80.5% | 8.18 GB | -24.05 GB | 6.22% | 3.18% | 0.003336 |
 | 4 — Tiled refiner | | | | | | | |
 
 #### 0h. Phase-Specific Quality Concerns
@@ -370,12 +370,12 @@ Currently recreated every frame:
 
 ### Acceptance Criteria — Phase 3
 
-- [ ] `GreenFormer.forward()` accepts `backbone_size` parameter
-- [ ] `F.interpolate` downsamples to 1024 before encoder
-- [ ] Decoder outputs upsampled to original resolution
-- [ ] Refiner receives full-res RGB + upsampled coarse predictions
-- [ ] Phase 0 benchmarks run — memory, timing, and pixel diff recorded in results table
-- [ ] Quality gate tests pass (lossy thresholds)
+- [x] `GreenFormer.forward()` accepts `backbone_size` parameter
+- [x] `F.interpolate` downsamples to 1024 before encoder
+- [x] Decoder outputs upsampled to original resolution
+- [x] Refiner receives full-res RGB + upsampled coarse predictions
+- [x] Phase 0 benchmarks run — memory, timing, and pixel diff recorded in results table
+- [ ] Quality gate tests pass (lossy thresholds) — quality below thresholds w/o retrain; viable as fast preview
 - [ ] Visual quality comparison (side-by-side with Phase 2 output)
 
 ---
