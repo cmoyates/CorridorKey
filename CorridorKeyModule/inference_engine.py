@@ -21,7 +21,7 @@ class CorridorKeyEngine:
         backbone_size: int | None = None,
         use_refiner: bool = True,
         refiner_tile_size: int | None = 512,
-        refiner_tile_overlap: int = 64,
+        refiner_tile_overlap: int = 96,
     ) -> None:
         self.device = torch.device(device)
         self.img_size = img_size

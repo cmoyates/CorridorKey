@@ -117,6 +117,7 @@ def create_engine(
     checkpoint: str | None = None,
     backbone_size: int | None = None,
     refiner_tile_size: int | None = 512,
+    refiner_tile_overlap: int = 64,
 ):
     """Create a CorridorKeyEngine instance."""
     from CorridorKeyModule.inference_engine import CorridorKeyEngine
@@ -127,8 +128,14 @@ def create_engine(
     if backbone_size:
         print(f"Backbone size: {backbone_size}")
     if refiner_tile_size:
-        print(f"Refiner tile size: {refiner_tile_size}")
-    return CorridorKeyEngine(ckpt, device=device, backbone_size=backbone_size, refiner_tile_size=refiner_tile_size)
+        print(f"Refiner tile size: {refiner_tile_size}, overlap: {refiner_tile_overlap}")
+    return CorridorKeyEngine(
+        ckpt,
+        device=device,
+        backbone_size=backbone_size,
+        refiner_tile_size=refiner_tile_size,
+        refiner_tile_overlap=refiner_tile_overlap,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -417,12 +424,24 @@ def main():
         default=512,
         help="Refiner tile size (default 512). 0 to disable tiling",
     )
+    parser.add_argument(
+        "--refiner-tile-overlap",
+        type=int,
+        default=96,
+        help="Refiner tile overlap in pixels (default 64)",
+    )
 
     args = parser.parse_args()
 
     device = args.device or get_device()
     tile_size = args.refiner_tile_size or None  # 0 -> None (disabled)
-    engine = create_engine(device, args.checkpoint, backbone_size=args.backbone_size, refiner_tile_size=tile_size)
+    engine = create_engine(
+        device,
+        args.checkpoint,
+        backbone_size=args.backbone_size,
+        refiner_tile_size=tile_size,
+        refiner_tile_overlap=args.refiner_tile_overlap,
+    )
 
     # Load frames
     frames = load_video_frames(args.clip, max_frames=args.max_frames)

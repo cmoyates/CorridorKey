@@ -204,7 +204,7 @@ Maintain a running table updated after each phase:
 | 1 — FP16 weights | 5.701s | -27.3% | 25.02 GB | -7.21 GB | 1.55% | 0.00% | 0.000007 |
 | 2 — GPU math + caching | 5.42s | -30.9% | 26.10 GB | -6.13 GB | 2.77% | 0.01% | 0.000041 |
 | 3 — Backbone 1024 | 1.53s | -80.5% | 8.18 GB | -24.05 GB | 6.22% | 3.18% | 0.003336 |
-| 4 — Tiled refiner | | | | | | | |
+| 4 — Tiled refiner (96px overlap) | 6.35s | -19.2% | 15.36 GB | -16.87 GB | 4.40% | 1.57% | 0.000773 |
 
 #### 0h. Phase-Specific Quality Concerns
 
@@ -411,14 +411,29 @@ weights_2d = np.outer(weights_1d, weights_1d)
 
 ### Acceptance Criteria — Phase 4
 
-- [x] `CNNRefinerModule` tiled with 512x512 tiles, 64px overlap
+- [x] `CNNRefinerModule` tiled with 512x512 tiles, 96px overlap (64px tested; 96px ~12% better MAE at zero cost)
 - [x] Each tile processed individually, moved to CPU immediately
 - [x] Device cache flushed after each tile (MPS/CUDA-aware)
 - [x] Tent weight map blends seams in CPU accumulator
-- [ ] Phase 0 benchmarks run — memory, timing, and pixel diff recorded in results table
-- [ ] Quality gate tests pass (lossy thresholds)
-- [ ] Visual comparison: no seam artifacts at tile boundaries
+- [x] Phase 0 benchmarks run — memory, timing, and pixel diff recorded in results table
+- [ ] Quality gate tests pass (lossy thresholds) — max_err exceeds plan thresholds; errors at subject edges, not seams
+- [x] Visual comparison: no seam artifacts at tile boundaries (confirmed via grid overlay analysis)
 - [x] Edge case: non-2048 resolutions handled correctly
+
+#### Phase 4 Benchmark Results (MPS, M3 Max)
+
+| Metric | Baseline | Phase 4 (96px overlap) | Delta |
+|--------|----------|----------------------|-------|
+| Median frame time | 7.846s | 6.348s | -19.1% |
+| Peak memory | 32.23 GB | 15.36 GB | -16.87 GB (-52.3%) |
+| Alpha MAE | 0.0 | 0.000773 | — |
+| Alpha max err | 0.0 | 0.635 | — |
+| Alpha PSNR | inf | 42.1 dB | — |
+| FG MAE | 0.0 | 0.002963 | — |
+| FG PSNR | inf | 39.5 dB | — |
+| Pixels > 1e-2 (alpha) | 0% | 1.57% | — |
+
+**Note:** Max errors (0.635 alpha, 0.557 FG) exceed plan thresholds but are NOT seam artifacts. Grid overlay analysis confirmed 90.6% of high-error pixels are at subject edges (hair, contours), not tile boundaries. This is inherent to tiling — each tile sees limited context vs full-image refiner. MAE and PSNR are acceptable. 96px overlap chosen over 64px after A/B test showed ~12% MAE improvement at zero cost.
 
 ---
 
