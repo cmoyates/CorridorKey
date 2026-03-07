@@ -411,14 +411,14 @@ weights_2d = np.outer(weights_1d, weights_1d)
 
 ### Acceptance Criteria — Phase 4
 
-- [ ] `CNNRefinerModule` tiled with 512x512 tiles, 64px overlap
-- [ ] Each tile processed individually, moved to CPU immediately
-- [ ] Device cache flushed after each tile (MPS/CUDA-aware)
-- [ ] Tent weight map blends seams in CPU accumulator
+- [x] `CNNRefinerModule` tiled with 512x512 tiles, 64px overlap
+- [x] Each tile processed individually, moved to CPU immediately
+- [x] Device cache flushed after each tile (MPS/CUDA-aware)
+- [x] Tent weight map blends seams in CPU accumulator
 - [ ] Phase 0 benchmarks run — memory, timing, and pixel diff recorded in results table
 - [ ] Quality gate tests pass (lossy thresholds)
 - [ ] Visual comparison: no seam artifacts at tile boundaries
-- [ ] Edge case: non-2048 resolutions handled correctly
+- [x] Edge case: non-2048 resolutions handled correctly
 
 ---
 
