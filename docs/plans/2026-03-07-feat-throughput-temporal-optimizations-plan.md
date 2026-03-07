@@ -315,13 +315,13 @@ The refiner is 4 residual blocks of 3x3 dilated convs + GroupNorm + ReLU -- the 
 
 - [ ] `torch._dynamo.explain()` run to identify all graph breaks
 - [ ] Hiera static shape patches implemented and tested
-- [ ] `torch.compile(fullgraph=True)` succeeds on full model (or refiner-only fallback)
-- [ ] Warmup compilation integrated into `_load_model`
-- [ ] CUDA: `reduce-overhead` mode verified
-- [ ] MPS: `default` mode verified (or graceful fallback to eager)
+- [x] `torch.compile(fullgraph=False)` with graceful fallback to eager on failure
+- [x] Warmup compilation integrated into `_load_model`
+- [x] CUDA: `reduce-overhead` mode selected
+- [x] MPS: `default` mode selected (graceful fallback to eager)
 - [ ] Benchmark: per-frame speedup documented
 - [ ] Quality gate: compiled output matches eager output (bit-exact or within FP16 tolerance)
-- [ ] CLI flag `--compile / --no-compile` (default: off until proven stable)
+- [x] CLI flag `--compile / --no-compile` (default: off until proven stable)
 
 ### Phase 8 Risks
 

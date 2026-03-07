@@ -44,6 +44,7 @@ def _make_engine_with_mock(mock_greenformer, img_size=64):
     engine.backbone_size = None
     engine.refiner_tile_size = None
     engine.refiner_tile_overlap = 96
+    engine.compile_model = False
     engine.model = mock_greenformer
     return engine
 
@@ -177,3 +178,24 @@ class TestProcessFramePostProcessing:
 
         # Both should produce the same output
         np.testing.assert_allclose(result_2d["alpha"], result_3d["alpha"], atol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# torch.compile flag plumbing
+# ---------------------------------------------------------------------------
+
+
+class TestCompileFlag:
+    """Verify compile_model flag is accepted and doesn't break engine creation."""
+
+    def test_compile_flag_default_off(self, mock_greenformer):
+        """compile_model should default to False in the mock engine helper."""
+        engine = _make_engine_with_mock(mock_greenformer)
+        assert engine.compile_model is False
+
+    def test_compile_flag_accepted(self, sample_frame_rgb, sample_mask, mock_greenformer):
+        """Engine with compile_model=False should process frames normally."""
+        engine = _make_engine_with_mock(mock_greenformer)
+        engine.compile_model = False
+        result = engine.process_frame(sample_frame_rgb, sample_mask)
+        assert "alpha" in result

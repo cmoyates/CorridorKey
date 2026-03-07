@@ -25,6 +25,7 @@ class CorridorKeyEngine:
         fp16: bool = True,
         gpu_postprocess: bool = True,
         sparse_refiner: bool = True,
+        compile_model: bool = False,
     ) -> None:
         self.device = torch.device(device)
         self.img_size = img_size
@@ -36,6 +37,7 @@ class CorridorKeyEngine:
         self.fp16 = fp16
         self.gpu_postprocess = gpu_postprocess
         self.sparse_refiner = sparse_refiner
+        self.compile_model = compile_model
 
         self.mean = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(1, 1, 3)
         self.std = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(1, 1, 3)
@@ -111,6 +113,43 @@ class CorridorKeyEngine:
         # this halves static VRAM footprint (~400MB savings)
         if self.fp16:
             model = model.half()
+
+        if self.compile_model:
+            model = self._compile_and_warmup(model)
+
+        return model
+
+    def _compile_and_warmup(self, model: GreenFormer) -> GreenFormer:
+        """Compile with torch.compile and run a warmup forward pass."""
+        device_type = self.device.type
+
+        # CUDA: reduce-overhead uses CUDA graphs for minimal kernel launch overhead
+        # MPS/CPU: default mode fuses ops via Inductor without CUDA graphs
+        if device_type == "cuda":
+            compile_mode = "reduce-overhead"
+        else:
+            compile_mode = "default"
+
+        print(f"Compiling model (mode={compile_mode}, device={device_type})...")
+
+        try:
+            model = torch.compile(model, mode=compile_mode, fullgraph=False)
+        except Exception as e:
+            print(f"[Warning] torch.compile failed ({e}), falling back to eager mode")
+            return model
+
+        # Warmup: trigger JIT compilation so subsequent frames are fast
+        backbone_size = self.backbone_size or self.img_size
+        dtype = torch.float16 if self.fp16 else torch.float32
+        dummy = torch.zeros(1, 4, backbone_size, backbone_size, device=self.device, dtype=dtype)
+
+        print("Running compilation warmup...")
+        try:
+            with torch.no_grad(), torch.autocast(device_type=device_type, dtype=torch.float16):
+                _ = model(dummy)
+            print("Compilation warmup complete.")
+        except Exception as e:
+            print(f"[Warning] Compilation warmup failed ({e}), model may recompile on first frame")
 
         return model
 

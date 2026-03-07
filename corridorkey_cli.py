@@ -59,8 +59,12 @@ def _prompt_optimization_preset() -> dict:
     choice = input("Select preset [1]: ").strip()
 
     _base = {
-        "fp16": True, "gpu_postprocess": True, "refiner_tile_overlap": 96,
-        "sparse_refiner": True, "async_pipeline": True,
+        "fp16": True,
+        "gpu_postprocess": True,
+        "refiner_tile_overlap": 96,
+        "sparse_refiner": True,
+        "async_pipeline": True,
+        "compile_model": False,
     }
     presets = {
         "1": {**_base, "backbone_size": None, "refiner_tile_size": 512},
@@ -74,6 +78,7 @@ def _prompt_optimization_preset() -> dict:
             "refiner_tile_overlap": 96,
             "sparse_refiner": False,
             "async_pipeline": False,
+            "compile_model": False,
         },
     }
 
@@ -106,6 +111,7 @@ def _prompt_custom_optimizations() -> dict:
 
     sparse_refiner = input("  Sparse refiner (skip BG/FG tiles)? [Y/n]: ").strip().lower() != "n"
     async_pipeline = input("  Async I/O pipeline (triple buffering)? [Y/n]: ").strip().lower() != "n"
+    compile_model = input("  torch.compile (graph fusion, slower first frame)? [y/N]: ").strip().lower() == "y"
 
     return {
         "fp16": fp16,
@@ -115,6 +121,7 @@ def _prompt_custom_optimizations() -> dict:
         "refiner_tile_overlap": refiner_tile_overlap,
         "sparse_refiner": sparse_refiner,
         "async_pipeline": async_pipeline,
+        "compile_model": compile_model,
     }
 
 
@@ -387,6 +394,12 @@ def main() -> None:
         default=True,
         help="Overlap I/O with inference via triple-buffered pipeline (default on)",
     )
+    parser.add_argument(
+        "--compile",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="torch.compile graph fusion — slower first frame, faster subsequent (default off)",
+    )
 
     args = parser.parse_args()
 
@@ -413,6 +426,7 @@ def main() -> None:
                 gpu_postprocess=args.gpu_postprocess,
                 sparse_refiner=args.sparse_refiner,
                 async_pipeline=args.async_pipeline,
+                compile_model=getattr(args, "compile", False),
             )
         elif args.action == "wizard":
             if not args.win_path:

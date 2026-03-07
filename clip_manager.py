@@ -506,6 +506,7 @@ def run_inference(
     gpu_postprocess=True,
     sparse_refiner=True,
     async_pipeline=True,
+    compile_model=False,
 ):
     ready_clips = [c for c in clips if c.input_asset and c.alpha_asset]
 
@@ -586,6 +587,7 @@ def run_inference(
         fp16=fp16,
         gpu_postprocess=gpu_postprocess,
         sparse_refiner=sparse_refiner,
+        compile_model=compile_model,
     )
 
     # EXR compression params (shared across all frames)
@@ -674,16 +676,30 @@ def run_inference(
             )
         else:
             _run_inference_sequential(
-                engine, clip, input_files, alpha_files, output_dirs,
-                num_frames, user_input_is_linear, exr_flags, process_frame_kwargs,
+                engine,
+                clip,
+                input_files,
+                alpha_files,
+                output_dirs,
+                num_frames,
+                user_input_is_linear,
+                exr_flags,
+                process_frame_kwargs,
             )
 
         logger.info(f"Clip {clip.name} Complete.")
 
 
 def _run_inference_sequential(
-    engine, clip, input_files, alpha_files, output_dirs,
-    num_frames, user_input_is_linear, exr_flags, process_frame_kwargs,
+    engine,
+    clip,
+    input_files,
+    alpha_files,
+    output_dirs,
+    num_frames,
+    user_input_is_linear,
+    exr_flags,
+    process_frame_kwargs,
 ):
     """Original sequential frame loop — fallback when async pipeline is disabled."""
     input_cap = None
