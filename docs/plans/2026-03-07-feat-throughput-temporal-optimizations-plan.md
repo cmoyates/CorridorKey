@@ -3,6 +3,7 @@ title: "feat: Throughput & Temporal Coherence Optimizations (Phases 6-10)"
 type: feat
 date: 2026-03-07
 depends_on: 2026-03-07-feat-vram-performance-optimizations-plan.md
+branch: feature/misc-optimizations
 ---
 
 # Throughput & Temporal Coherence Optimizations (Phases 6-10)
@@ -96,13 +97,13 @@ Add `--sparse-refiner / --no-sparse-refiner` flag (default: on). Wire through `C
 
 ### Acceptance Criteria -- Phase 6
 
-- [ ] Interest mask generated from coarse alpha (0.01 < alpha < 0.99)
-- [ ] Mask dilated by 65px (max_pool2d) to guard refiner receptive field
-- [ ] `_tiled_refine()` skips empty tiles
-- [ ] Zero-delta regions handled correctly (no NaN, no artifacts)
+- [x] Interest mask generated from coarse alpha (0.01 < alpha < 0.99)
+- [x] Mask dilated by 65px (max_pool2d) to guard refiner receptive field
+- [x] `_tiled_refine()` skips empty tiles
+- [x] Zero-delta regions handled correctly (no NaN, no artifacts)
 - [ ] Benchmark run -- timing improvement documented
-- [ ] Quality gate tests pass (should be lossless for skipped tiles)
-- [ ] CLI flag `--sparse-refiner` exposed
+- [x] Quality gate tests pass (should be lossless for skipped tiles)
+- [x] CLI flag `--sparse-refiner` exposed
 - [ ] Visual comparison: no artifacts at skip/refine boundaries
 
 ### Phase 6 Risks

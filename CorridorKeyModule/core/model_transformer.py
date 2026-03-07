@@ -139,6 +139,9 @@ class CNNRefinerModule(nn.Module):
 
 
 class GreenFormer(nn.Module):
+    # CNN refiner receptive field radius (dilated convs d=1,2,4,8 with 3x3 kernels)
+    REFINER_RECEPTIVE_FIELD = 65
+
     def __init__(
         self,
         encoder_name: str = "hiera_base_plus_224.mae_in1k_ft_in1k",
@@ -148,6 +151,7 @@ class GreenFormer(nn.Module):
         use_refiner: bool = True,
         refiner_tile_size: int | None = None,
         refiner_tile_overlap: int = 64,
+        sparse_refiner: bool = True,
     ) -> None:
         super().__init__()
 
@@ -158,6 +162,7 @@ class GreenFormer(nn.Module):
         # Tiled refiner config — reduces peak VRAM by processing tiles sequentially
         self.refiner_tile_size = refiner_tile_size
         self.refiner_tile_overlap = refiner_tile_overlap
+        self.sparse_refiner = sparse_refiner
         if refiner_tile_size is not None:
             self._tent_weight = self._build_tent_weight(refiner_tile_size, refiner_tile_overlap)
         else:
@@ -258,8 +263,15 @@ class GreenFormer(nn.Module):
         w1d = torch.cat([ramp, center, ramp.flip(0)])
         return (w1d.unsqueeze(1) * w1d.unsqueeze(0)).unsqueeze(0).unsqueeze(0)  # [1, 1, ts, ts]
 
-    def _tiled_refine(self, rgb: torch.Tensor, coarse_pred: torch.Tensor) -> torch.Tensor:
-        """Run refiner in tiles to reduce peak VRAM. Blends overlaps with tent weights."""
+    def _tiled_refine(
+        self, rgb: torch.Tensor, coarse_pred: torch.Tensor, interest_mask: torch.Tensor | None = None
+    ) -> torch.Tensor:
+        """Run refiner in tiles to reduce peak VRAM. Blends overlaps with tent weights.
+
+        Args:
+            interest_mask: Optional [B, 1, H, W] binary mask (dilated). Tiles where
+                mask is entirely zero are skipped (delta=0, coarse passes through).
+        """
         tile_size = self.refiner_tile_size
         overlap = self.refiner_tile_overlap
         stride = tile_size - overlap
@@ -278,8 +290,20 @@ class GreenFormer(nn.Module):
                 s.append(length - tile_size)
             return sorted(set(s))
 
+        tiles_total = 0
+        tiles_skipped = 0
+
         for y in _starts(h):
             for x in _starts(w):
+                tiles_total += 1
+
+                # Sparse skip: if no active pixel in this tile region, delta=0
+                if interest_mask is not None:
+                    tile_mask = interest_mask[:, :, y : y + tile_size, x : x + tile_size]
+                    if not tile_mask.any():
+                        tiles_skipped += 1
+                        continue
+
                 rgb_tile = rgb[:, :, y : y + tile_size, x : x + tile_size]
                 coarse_tile = coarse_pred[:, :, y : y + tile_size, x : x + tile_size]
 
@@ -295,7 +319,15 @@ class GreenFormer(nn.Module):
                 elif device.type == "mps":
                     torch.mps.empty_cache()
 
-        return (output_acc / weight_acc.clamp(min=1e-8)).to(device)
+        if tiles_skipped > 0:
+            print(f"Sparse refiner: {tiles_skipped}/{tiles_total} tiles skipped ({tiles_skipped / tiles_total:.0%})")
+
+        # Where no tile contributed, delta is already 0 in output_acc.
+        # Set weight_acc to 1 to avoid div-by-zero (0/1 = 0 delta, correct).
+        no_contribution = weight_acc == 0
+        weight_acc[no_contribution] = 1.0
+
+        return (output_acc / weight_acc).to(device)
 
     def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
         # x: [B, 4, H, W]
@@ -343,6 +375,14 @@ class GreenFormer(nn.Module):
         # Feed the Refiner
         coarse_pred = torch.cat([alpha_coarse, fg_coarse], dim=1)  # [B, 4, H, W]
 
+        # Sparse interest mask: only refine edge regions where alpha is uncertain
+        interest_mask = None
+        if self.sparse_refiner and self.use_refiner and self.refiner is not None:
+            edge_region = (alpha_coarse > 0.01) & (alpha_coarse < 0.99)  # [B, 1, H, W]
+            rf = self.REFINER_RECEPTIVE_FIELD
+            padding = rf // 2
+            interest_mask = F.max_pool2d(edge_region.float(), kernel_size=rf, stride=1, padding=padding)
+
         # Refiner outputs DELTA LOGITS
         # The refiner predicts the correction in valid score space (-inf, inf)
         if self.use_refiner and self.refiner is not None:
@@ -350,7 +390,7 @@ class GreenFormer(nn.Module):
                 input_size[0] > self.refiner_tile_size or input_size[1] > self.refiner_tile_size
             )
             if use_tiling:
-                delta_logits = self._tiled_refine(rgb, coarse_pred)
+                delta_logits = self._tiled_refine(rgb, coarse_pred, interest_mask)
             else:
                 delta_logits = self.refiner(rgb, coarse_pred)
         else:

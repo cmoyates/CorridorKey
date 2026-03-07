@@ -24,6 +24,7 @@ class CorridorKeyEngine:
         refiner_tile_overlap: int = 96,
         fp16: bool = True,
         gpu_postprocess: bool = True,
+        sparse_refiner: bool = True,
     ) -> None:
         self.device = torch.device(device)
         self.img_size = img_size
@@ -34,6 +35,7 @@ class CorridorKeyEngine:
         self.refiner_tile_overlap = refiner_tile_overlap
         self.fp16 = fp16
         self.gpu_postprocess = gpu_postprocess
+        self.sparse_refiner = sparse_refiner
 
         self.mean = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(1, 1, 3)
         self.std = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(1, 1, 3)
@@ -54,6 +56,7 @@ class CorridorKeyEngine:
             use_refiner=self.use_refiner,
             refiner_tile_size=self.refiner_tile_size,
             refiner_tile_overlap=self.refiner_tile_overlap,
+            sparse_refiner=self.sparse_refiner,
         )
         model = model.to(self.device)
         model.eval()

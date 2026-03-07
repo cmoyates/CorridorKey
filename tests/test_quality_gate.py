@@ -386,6 +386,119 @@ class TestTiledRefiner:
         assert tent[0, 0, 256, 256] == 1.0
 
 
+class TestSparseTiledRefiner:
+    """Verify sparse (compute-skipping) tiled refiner correctness."""
+
+    @staticmethod
+    def _make_sparse_harness(refiner, tile_size, overlap):
+        """Create a minimal object with sparse _tiled_refine capability."""
+        from CorridorKeyModule.core.model_transformer import GreenFormer
+
+        class _Harness:
+            pass
+
+        h = _Harness()
+        h.refiner = refiner
+        h.refiner_tile_size = tile_size
+        h.refiner_tile_overlap = overlap
+        h.sparse_refiner = True
+        h._tent_weight = GreenFormer._build_tent_weight(tile_size, overlap)
+        h._tiled_refine = GreenFormer._tiled_refine.__get__(h)
+        return h
+
+    def test_all_bg_skips_all_tiles(self):
+        """All-zero interest mask should skip every tile, producing zero delta."""
+        import torch
+
+        from CorridorKeyModule.core.model_transformer import CNNRefinerModule
+
+        torch.manual_seed(42)
+        refiner = CNNRefinerModule(in_channels=7, hidden_channels=16, out_channels=4)
+        refiner.set_attribute = None  # not used
+        refiner.train(False)
+
+        harness = self._make_sparse_harness(refiner, 32, 8)
+        rgb = torch.randn(1, 3, 64, 64)
+        coarse = torch.randn(1, 4, 64, 64)
+        mask = torch.zeros(1, 1, 64, 64)
+
+        with torch.no_grad():
+            result = harness._tiled_refine(rgb, coarse, interest_mask=mask)
+
+        assert (result == 0).all(), "All-BG mask should produce zero delta everywhere"
+
+    def test_full_mask_matches_nonsparse(self):
+        """All-ones mask should produce identical output to non-sparse path."""
+        import torch
+
+        from CorridorKeyModule.core.model_transformer import CNNRefinerModule
+
+        torch.manual_seed(42)
+        refiner = CNNRefinerModule(in_channels=7, hidden_channels=16, out_channels=4)
+        refiner.train(False)
+
+        rgb = torch.randn(1, 3, 64, 64)
+        coarse = torch.randn(1, 4, 64, 64)
+
+        harness = self._make_sparse_harness(refiner, 32, 8)
+
+        mask_full = torch.ones(1, 1, 64, 64)
+
+        with torch.no_grad():
+            sparse_result = harness._tiled_refine(rgb, coarse, interest_mask=mask_full)
+            dense_result = harness._tiled_refine(rgb, coarse, interest_mask=None)
+
+        diff = (dense_result - sparse_result).abs()
+        assert diff.max().item() < 1e-5, f"Full mask should match dense, max diff={diff.max().item()}"
+
+    def test_partial_mask_no_nan(self):
+        """Mixed mask produces finite output with no NaN/Inf."""
+        import torch
+
+        from CorridorKeyModule.core.model_transformer import CNNRefinerModule
+
+        torch.manual_seed(42)
+        refiner = CNNRefinerModule(in_channels=7, hidden_channels=16, out_channels=4)
+        refiner.train(False)
+
+        harness = self._make_sparse_harness(refiner, 32, 8)
+        rgb = torch.randn(1, 3, 64, 64)
+        coarse = torch.randn(1, 4, 64, 64)
+
+        mask = torch.zeros(1, 1, 64, 64)
+        mask[:, :, 16:48, 16:48] = 1.0
+
+        with torch.no_grad():
+            result = harness._tiled_refine(rgb, coarse, interest_mask=mask)
+
+        assert torch.isfinite(result).all(), "Sparse refiner produced NaN/Inf"
+
+    def test_skipped_region_is_zero(self):
+        """Regions with no active mask pixels should have zero delta."""
+        import torch
+
+        from CorridorKeyModule.core.model_transformer import CNNRefinerModule
+
+        torch.manual_seed(42)
+        refiner = CNNRefinerModule(in_channels=7, hidden_channels=16, out_channels=4)
+        refiner.train(False)
+
+        harness = self._make_sparse_harness(refiner, 32, 8)
+        rgb = torch.randn(1, 3, 64, 64)
+        coarse = torch.randn(1, 4, 64, 64)
+
+        # Only top-left 8x8 active
+        mask = torch.zeros(1, 1, 64, 64)
+        mask[:, :, :8, :8] = 1.0
+
+        with torch.no_grad():
+            result = harness._tiled_refine(rgb, coarse, interest_mask=mask)
+
+        # Bottom-right quadrant: no tile with activity reaches here
+        bottom_right = result[:, :, 48:, 48:]
+        assert (bottom_right == 0).all(), "Skipped region should have zero delta"
+
+
 class TestSmokeNoBoom:
     """Minimal sanity check with synthetic input. No GPU or model weights."""
 

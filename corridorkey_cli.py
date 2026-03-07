@@ -58,7 +58,7 @@ def _prompt_optimization_preset() -> dict:
 
     choice = input("Select preset [1]: ").strip()
 
-    _base = {"fp16": True, "gpu_postprocess": True, "refiner_tile_overlap": 96}
+    _base = {"fp16": True, "gpu_postprocess": True, "refiner_tile_overlap": 96, "sparse_refiner": True}
     presets = {
         "1": {**_base, "backbone_size": None, "refiner_tile_size": 512},
         "2": {**_base, "backbone_size": 1024, "refiner_tile_size": 512},
@@ -69,6 +69,7 @@ def _prompt_optimization_preset() -> dict:
             "backbone_size": None,
             "refiner_tile_size": None,
             "refiner_tile_overlap": 96,
+            "sparse_refiner": False,
         },
     }
 
@@ -99,12 +100,15 @@ def _prompt_custom_optimizations() -> dict:
     overlap_val = input("  Refiner tile overlap (blank = 96): ").strip()
     refiner_tile_overlap = int(overlap_val) if overlap_val else 96
 
+    sparse_refiner = input("  Sparse refiner (skip BG/FG tiles)? [Y/n]: ").strip().lower() != "n"
+
     return {
         "fp16": fp16,
         "gpu_postprocess": gpu_post,
         "backbone_size": backbone_size,
         "refiner_tile_size": refiner_tile_size,
         "refiner_tile_overlap": refiner_tile_overlap,
+        "sparse_refiner": sparse_refiner,
     }
 
 
@@ -365,6 +369,12 @@ def main() -> None:
         "--refiner-tile-size", type=int, default=512, help="Refiner tile size (0 = disabled, default 512)"
     )
     parser.add_argument("--refiner-tile-overlap", type=int, default=96, help="Refiner tile overlap pixels (default 96)")
+    parser.add_argument(
+        "--sparse-refiner",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Skip refiner tiles with no edge pixels (default on)",
+    )
 
     args = parser.parse_args()
 
@@ -389,6 +399,7 @@ def main() -> None:
                 refiner_tile_overlap=args.refiner_tile_overlap,
                 fp16=args.fp16,
                 gpu_postprocess=args.gpu_postprocess,
+                sparse_refiner=args.sparse_refiner,
             )
         elif args.action == "wizard":
             if not args.win_path:

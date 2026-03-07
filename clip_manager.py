@@ -504,6 +504,7 @@ def run_inference(
     refiner_tile_overlap=96,
     fp16=True,
     gpu_postprocess=True,
+    sparse_refiner=True,
 ):
     ready_clips = [c for c in clips if c.input_asset and c.alpha_asset]
 
@@ -583,6 +584,7 @@ def run_inference(
         refiner_tile_overlap=refiner_tile_overlap,
         fp16=fp16,
         gpu_postprocess=gpu_postprocess,
+        sparse_refiner=sparse_refiner,
     )
 
     for clip in ready_clips:

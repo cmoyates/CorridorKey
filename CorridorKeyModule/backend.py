@@ -211,6 +211,7 @@ def create_engine(
     refiner_tile_overlap: int = 96,
     fp16: bool = True,
     gpu_postprocess: bool = True,
+    sparse_refiner: bool = True,
 ):
     """Factory: returns an engine with process_frame() matching the Torch contract."""
     backend = resolve_backend(backend)
@@ -236,4 +237,5 @@ def create_engine(
             refiner_tile_overlap=refiner_tile_overlap,
             fp16=fp16,
             gpu_postprocess=gpu_postprocess,
+            sparse_refiner=sparse_refiner,
         )
