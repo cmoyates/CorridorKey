@@ -33,6 +33,10 @@ Designate a fixed sample clip (10-20 frames from a representative green screen s
 - Solid green regions
 - Mixed lighting / shadow on green screen
 
+**Selected clip:**
+- Input: `ClipsForInference/BetterGreenScreenTest_BASE/Input.mp4`
+- Alpha hint: `ClipsForInference/BetterGreenScreenTest_BASE/AlphaHint/BetterGreenScreenTest_MASK.mp4`
+
 #### 0b. Benchmark Script
 
 Create `benchmarks/bench_phase.py` that measures three metrics per run:
@@ -219,13 +223,13 @@ Maintain a running table updated after each phase:
 
 ### Acceptance Criteria — Phase 0
 
-- [ ] Reference clip selected and stored locally
-- [ ] `benchmarks/bench_phase.py` created with timing, memory, and pixel diff reporting
-- [ ] `tests/test_quality_gate.py` created with per-channel quality gates
+- [x] Reference clip selected and stored locally
+- [x] `benchmarks/bench_phase.py` created with timing, memory, and pixel diff reporting
+- [x] `tests/test_quality_gate.py` created with per-channel quality gates
 - [ ] Baseline `.npy` outputs captured (unoptimized pipeline)
 - [ ] Baseline timing and memory measurements recorded
-- [ ] Diff visualization generates heat maps for failures
-- [ ] Baseline `.npy` files added to `.gitignore`
+- [x] Diff visualization generates heat maps for failures
+- [x] Baseline `.npy` files added to `.gitignore`
 - [ ] All tests pass against the baseline (trivially — comparing to itself)
 
 ### Important Caveats
