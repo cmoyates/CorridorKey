@@ -35,6 +35,7 @@ CorridorKey_remote.bat
 *.safetensors
 *.bin
 *.onnx
+*.mlpackage
 
 # Checkpoint Directories
 # Benchmark baseline outputs (large .npy files)

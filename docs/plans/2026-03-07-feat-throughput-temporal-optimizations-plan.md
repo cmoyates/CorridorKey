@@ -587,13 +587,13 @@ This phase only creates the export script. Runtime integration (loading `.mlpack
 
 ### Acceptance Criteria -- Phase 10
 
-- [ ] `scripts/export_coreml.py` created
-- [ ] Backbone exports to `.mlpackage` successfully
-- [ ] `compute_precision=FLOAT32` enforced
-- [ ] 6D -> 5D reshape transformation for Hiera windows
-- [ ] GroupNorm -> BatchNorm weight folding for refiner
-- [ ] Output validation: CoreML vs PyTorch within tolerance
-- [ ] `coremltools` added as optional dependency (`uv sync --group coreml`)
+- [x] `scripts/export_coreml.py` created
+- [x] Backbone exports to `.mlpackage` successfully
+- [x] `compute_precision=FLOAT32` enforced
+- [x] 6D -> 5D reshape transformation for Hiera windows
+- [x] GroupNorm -> BatchNorm weight folding for refiner
+- [x] Output validation: CoreML vs PyTorch within tolerance
+- [x] `coremltools` added as optional dependency (`uv sync --group coreml`)
 - [ ] README/docs updated with export instructions
 
 ### Phase 10 Risks

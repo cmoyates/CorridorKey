@@ -43,6 +43,9 @@ dev = [
     "pytest-cov",
     "ruff",
 ]
+coreml = [
+    "coremltools>=8.0",
+]
 
 [project.scripts]
 corridorkey = "corridorkey_cli:main"
