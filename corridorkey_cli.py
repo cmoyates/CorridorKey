@@ -360,6 +360,11 @@ def main() -> None:
         help="Compute device (default: auto-detect CUDA > MPS > CPU)",
     )
     add_optimization_args(parser)
+    parser.add_argument(
+        "--no-roi",
+        action="store_true",
+        help="Disable dynamic ROI cropping (process full frame at 2048x2048)",
+    )
 
     args = parser.parse_args()
 
@@ -384,6 +389,7 @@ def main() -> None:
                 refiner_tile_overlap=args.refiner_tile_overlap,
                 fp16=args.fp16,
                 gpu_postprocess=args.gpu_postprocess,
+                roi_enabled=not args.no_roi,
             )
         elif args.action == "wizard":
             if not args.win_path:

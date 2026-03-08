@@ -522,6 +522,7 @@ def run_inference(
     refiner_tile_overlap=96,
     fp16=True,
     gpu_postprocess=True,
+    roi_enabled=True,
 ):
     ready_clips = [c for c in clips if c.input_asset and c.alpha_asset]
 
@@ -603,8 +604,19 @@ def run_inference(
         gpu_postprocess=gpu_postprocess,
     )
 
+    roi_manager = None
+    if roi_enabled:
+        from CorridorKeyModule.roi_manager import ROIManager
+
+        roi_manager = ROIManager()
+        logger.info("Dynamic ROI cropping enabled")
+
     for clip in ready_clips:
         logger.info(f"Running Inference on: {clip.name}")
+
+        # Reset ROI state for each new clip
+        if roi_manager is not None:
+            roi_manager.reset()
 
         # Setup Outputs in ClipFolder/Output/...
         clip_out_root = os.path.join(clip.root_path, "Output")
@@ -716,9 +728,7 @@ def run_inference(
 
             # 3. Process
             USE_STRAIGHT_MODEL = True
-            res = engine.process_frame(
-                img_srgb,
-                mask_linear,
+            engine_kwargs = dict(
                 input_is_linear=input_is_linear,
                 fg_is_straight=USE_STRAIGHT_MODEL,
                 despill_strength=despill_strength,
@@ -726,6 +736,11 @@ def run_inference(
                 despeckle_size=despeckle_size,
                 refiner_scale=refiner_scale,
             )
+
+            if roi_manager is not None:
+                res = roi_manager.process_with_roi(engine, img_srgb, mask_linear, **engine_kwargs)
+            else:
+                res = engine.process_frame(img_srgb, mask_linear, **engine_kwargs)
 
             pred_fg = res["fg"]  # sRGB
             pred_alpha = res["alpha"]  # Linear
@@ -942,6 +957,11 @@ if __name__ == "__main__":
         help="Limit number of frames to process per clip (e.g. 1 for first frame only)",
     )
     add_optimization_args(parser)
+    parser.add_argument(
+        "--no-roi",
+        action="store_true",
+        help="Disable dynamic ROI cropping (process full frame at 2048x2048)",
+    )
 
     args = parser.parse_args()
 
@@ -967,6 +987,7 @@ if __name__ == "__main__":
             refiner_tile_overlap=args.refiner_tile_overlap,
             fp16=args.fp16,
             gpu_postprocess=args.gpu_postprocess,
+            roi_enabled=not args.no_roi,
         )
     elif args.action == "wizard":
         if not args.win_path:
