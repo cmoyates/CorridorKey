@@ -129,13 +129,13 @@ class CropLockManager:
 - If YOLO returns `None` and no lock exists: fall back to full-frame processing
 
 **Acceptance criteria:**
-- [ ] 1-Euro filter smooths bbox across frames
-- [ ] 20% padding applied after smoothing
-- [ ] Lock persists across frames with identical crop coordinates
-- [ ] Unlock triggers when subject approaches 5% of crop boundary
-- [ ] No oscillation (min 10-frame lock)
-- [ ] Scene cuts reset filter state
-- [ ] No-detection gracefully falls back
+- [x] 1-Euro filter smooths bbox across frames
+- [x] 20% padding applied after smoothing
+- [x] Lock persists across frames with identical crop coordinates
+- [x] Unlock triggers when subject approaches 5% of crop boundary
+- [x] No oscillation (min 10-frame lock)
+- [x] Scene cuts reset filter state
+- [x] No-detection gracefully falls back
 
 ---
 
