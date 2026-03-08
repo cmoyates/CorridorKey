@@ -43,7 +43,8 @@ def _configure_environment() -> None:
     This is called once at startup when running from the command line.
     It is NOT called when importing clip_manager as a library.
     """
-    warnings.filterwarnings("ignore")
+    warnings.filterwarnings("ignore", category=FutureWarning)
+    warnings.filterwarnings("ignore", category=UserWarning, module="torch")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
