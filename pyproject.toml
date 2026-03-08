@@ -10,7 +10,7 @@ authors = [{ name = "Corridor Digital" }]
 dependencies = [
     # Core inference
     "torch==2.10.0",
-    "torchvision",
+    "torchvision==0.24.1",
     "timm==1.0.24",
     "numpy",
     "opencv-python",
