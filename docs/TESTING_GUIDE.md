@@ -62,6 +62,18 @@ uv run python benchmarks/bench_matrix.py \
 
 Outputs a summary table with median frame time and peak VRAM per preset.
 
+### 4. Visual comparison (optional)
+
+Runs each preset on a single frame and saves all output passes as PNGs for side-by-side review:
+
+```bash
+uv run python benchmarks/visual_compare.py \
+  --clip path/to/input.mp4 \
+  --alpha path/to/alpha_hint.mp4
+```
+
+Outputs to `benchmarks/visual_review/<preset>/` with `alpha.png`, `fg.png`, `comp.png`, `processed.png` per preset. Use `--frame-index N` to pick a different frame.
+
 ## What to look for
 
 - **CUDA peak memory** — main thing we're validating (MPS numbers from M3 aren't directly comparable)
