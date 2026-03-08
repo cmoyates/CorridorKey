@@ -216,7 +216,7 @@ class CorridorKeyEngine:
 
         comp_srgb = cu.linear_to_srgb(comp_lin)
 
-        return {
+        return {  # type: ignore[return-value]  # cu.* returns ndarray|Tensor but inputs are always ndarray here
             "alpha": res_alpha,  # Linear, Raw Prediction
             "fg": res_fg,  # sRGB, Raw Prediction (Straight)
             "comp": comp_srgb,  # sRGB, Composite

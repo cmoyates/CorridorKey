@@ -25,7 +25,7 @@ import typer
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.panel import Panel
-from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TaskID, TextColumn, TimeElapsedColumn
 from rich.prompt import Confirm, IntPrompt, Prompt
 from rich.table import Table
 
@@ -76,7 +76,7 @@ def _configure_environment() -> None:
 # ---------------------------------------------------------------------------
 
 _progress: Progress | None = None
-_frame_task_id: int | None = None
+_frame_task_id: TaskID | None = None
 
 
 def _make_progress() -> Progress:

@@ -54,7 +54,7 @@ def _auto_detect_backend() -> str:
         return "torch"
 
     try:
-        import corridorkey_mlx  # noqa: F401
+        import corridorkey_mlx  # type: ignore[import-not-found]  # noqa: F401
     except ImportError:
         logger.info("corridorkey_mlx not installed — using torch backend")
         return "torch"
@@ -74,7 +74,7 @@ def _validate_mlx_available() -> None:
         raise RuntimeError("MLX backend requires Apple Silicon (M1+ Mac)")
 
     try:
-        import corridorkey_mlx  # noqa: F401
+        import corridorkey_mlx  # type: ignore[import-not-found]  # noqa: F401
     except ImportError as err:
         raise RuntimeError(
             "MLX backend requested but corridorkey_mlx is not installed. "
@@ -225,7 +225,7 @@ def create_engine(
 
     if backend == "mlx":
         ckpt = _discover_checkpoint(MLX_EXT)
-        from corridorkey_mlx import CorridorKeyMLXEngine
+        from corridorkey_mlx import CorridorKeyMLXEngine  # type: ignore[import-not-found]
 
         raw_engine = CorridorKeyMLXEngine(str(ckpt), img_size=img_size, tile_size=tile_size, overlap=overlap)
         mode = f"tiled (tile={tile_size}, overlap={overlap})" if tile_size else "full-frame"
