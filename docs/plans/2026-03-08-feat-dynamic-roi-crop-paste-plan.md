@@ -274,3 +274,48 @@ CorridorKeyModule/
 3. **YOLO every frame while locked?** CPU cost (~20-50ms/frame) is small vs GPU inference, but for 1000+ frame clips it adds up. Could run every Nth frame while locked.
 4. **Despeckle threshold scaling?** `despeckle_size=400` means different things at 512 vs 2048 bucket size. Scale proportionally?
 5. **1-Euro filter params?** min_cutoff=1.0, beta=0.007, d_cutoff=1.0 are standard defaults — need tuning with real footage?
+
+---
+
+## Handoff Notes (2026-03-08)
+
+### Implementation Status — ALL 4 STEPS COMPLETE
+
+| Step | File | Tests |
+|------|------|-------|
+| 1. YOLO CPU detection | `roi_detector.py` | 5 tests (`test_roi_detector.py`) |
+| 2. Temporal stabilization | `roi_stabilizer.py` | 19 tests (`test_roi_stabilizer.py`) |
+| 3. Bucket padding + engine integration | `roi_manager.py` + `inference_engine.py` | 33 tests (`test_roi_manager.py`) |
+| 4. Feathered reintegration | `roi_manager.py` | (included in step 3 tests) |
+| CLI integration | `clip_manager.py` + `corridorkey_cli.py` | — |
+| Benchmark | `benchmarks/bench_roi.py` | — |
+
+57 total tests, all passing.
+
+### CLI: `--no-roi` flag added to both `clip_manager.py` and `corridorkey_cli.py`. ROI enabled by default.
+
+### Engine change: `process_frame()` now accepts optional `img_size` param to override `self.img_size`, enabling bucket-sized inference without resize.
+
+### Benchmark Results (1920x1080, MPS, 5 frames, BetterGreenScreenTest clip)
+
+| Metric | Full Frame | With ROI |
+|--------|-----------|----------|
+| Median time | 44.0s | 19.5s (**2.25x faster**) |
+| Peak memory | 31.2 GB | 30.1 GB |
+| Alpha MAE vs full-frame | — | 0.023 |
+
+### Key Observations from Benchmarking
+
+1. **YOLO detection rate low** — only 1/5 frames detected on this clip. Confidence threshold (0.3) or subject appearance may need tuning.
+2. **All detected subjects land in 2048 bucket** — at 1080p, even small subjects + 20% padding exceed 1024. Real bucket savings need 4K input.
+3. **Quality delta is non-trivial** — MAE 0.023 on alpha, max_err >1.0. Feathered reintegration introduces visible differences vs full-frame. Needs investigation.
+4. **Speedup comes from crop, not bucket reduction** — processing a smaller region of the frame is faster even at 2048 because the engine resize (crop→2048) preserves more detail than (full_frame→2048).
+5. **`torch.compile` graph breaks** — untested. Bucket size changes between frames may cause recompilations.
+
+### Remaining Work
+
+- [ ] `torch.compile` graph break verification on GPU
+- [ ] Tune YOLO confidence threshold for green screen footage
+- [ ] Test with 4K footage (where 512/1024 buckets actually trigger)
+- [ ] Investigate quality delta — is feather blending causing artifacts?
+- [ ] Consider multi-person bbox union for multi-actor shots
