@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# Check for uv
+if ! command -v uv &> /dev/null; then
+    echo "[ERROR] uv not installed. Install: curl -LsSf https://astral.sh/uv/install.sh | sh"
+    exit 1
+fi
+
 # Ensure script stops on error
 set -e
 

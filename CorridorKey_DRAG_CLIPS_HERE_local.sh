@@ -1,6 +1,12 @@
 #!/bin/bash
 # Corridor Key Launcher - Local Linux/macOS
 
+# Check for uv
+if ! command -v uv &> /dev/null; then
+    echo "[ERROR] uv not installed. Install: curl -LsSf https://astral.sh/uv/install.sh | sh"
+    exit 1
+fi
+
 # Get the directory where this script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 LOCAL_SCRIPT="$SCRIPT_DIR/corridorkey_cli.py"

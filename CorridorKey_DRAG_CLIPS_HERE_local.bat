@@ -1,6 +1,14 @@
 @echo off
 REM Corridor Key Launcher - Local
 
+REM Check for uv
+where uv >nul 2>&1
+if %errorlevel% neq 0 (
+    echo [ERROR] uv is not installed. Please run Install_CorridorKey_Windows.bat first.
+    pause
+    exit /b
+)
+
 REM Set script path (assumes corridorkey_cli.py is in the same directory as this batch file)
 set "SCRIPT_DIR=%~dp0"
 set "LOCAL_SCRIPT=%SCRIPT_DIR%corridorkey_cli.py"
