@@ -37,9 +37,9 @@ def _clamp(x: np.ndarray | torch.Tensor, min: float) -> np.ndarray | torch.Tenso
     Clamp function that supports both Numpy arrays and PyTorch tensors.
     """
     if _is_tensor(x):
-        return x.clamp(min=0.0)
+        return x.clamp(min=min)
     else:
-        return np.clip(x, 0.0, None)
+        return np.clip(x, min, None)
 
 
 _torch_stack = functools.partial(torch.stack, dim=-1)

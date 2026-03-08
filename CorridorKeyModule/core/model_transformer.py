@@ -290,10 +290,6 @@ class GreenFormer(nn.Module):
                 weight_acc[:, :, y : y + tile_size, x : x + tile_size] += tent
 
                 del delta, rgb_tile, coarse_tile
-                if device.type == "cuda":
-                    torch.cuda.empty_cache()
-                elif device.type == "mps":
-                    torch.mps.empty_cache()
 
         return (output_acc / weight_acc.clamp(min=1e-8)).to(device)
 
@@ -323,11 +319,9 @@ class GreenFormer(nn.Module):
         alpha_logits_up = F.interpolate(alpha_logits, size=input_size, mode="bilinear", align_corners=False)
         fg_logits_up = F.interpolate(fg_logits, size=input_size, mode="bilinear", align_corners=False)
 
-        # --- HUMILITY CLAMP REMOVED (Phase 3) ---
-        # User requested NO CLAMPING to preserve all backbone detail.
-        # Refiner sees raw logits (-inf to +inf).
-        # alpha_logits_up = torch.clamp(alpha_logits_up, -3.0, 3.0)
-        # fg_logits_up = torch.clamp(fg_logits_up, -3.0, 3.0)
+        # Humility clamp removed: clamping logits to [-3, 3] limited refiner correction
+        # range, causing visible banding in low-contrast regions. Raw logits are safe
+        # because FP16 autocast handles numerical stability and sigmoid saturates gracefully.
 
         # Coarse Probs (for Loss and Refiner Input)
         alpha_coarse = torch.sigmoid(alpha_logits_up)

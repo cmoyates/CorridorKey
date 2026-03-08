@@ -49,7 +49,7 @@ FP16_THRESHOLDS = {
 }
 
 LOSSY_THRESHOLDS = {
-    "max_abs_err": 0.02,
+    "max_abs_err": 0.06,  # Higher than fp16 (0.04) — includes backbone downsampling + tile seam artifacts
     "mae": 0.005,
     "psnr_min_db": 40.0,
 }

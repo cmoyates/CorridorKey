@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cd /Users/cristopheryates/Documents/Projects/Python/CorridorKey && uv run ruff check --fix 2>&1 | tail -20"
+            "command": "uv run ruff check --fix 2>&1 | tail -20"
           }
         ]
       }
