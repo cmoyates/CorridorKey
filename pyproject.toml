@@ -86,6 +86,11 @@ omit = [
     "test_vram.py",  # manual GPU smoke test, not part of the pytest suite
 ]
 
+[tool.uv]
+override-dependencies = [
+    "opencv-python-headless>=0.0.0; extra == 'never'",
+]
+
 [[tool.uv.index]]
 name = "pytorch"
 url = "https://download.pytorch.org/whl/cu126"
