@@ -358,9 +358,14 @@ def interactive_wizard(win_path: str, device: str | None = None) -> None:
 
     console.print(f"\nFound [bold]{len(work_dirs)}[/bold] potential clip folders.")
 
-    # Check for loose videos
+    # Check for loose videos (exclude files already named Input.*)
+    known_names = {"input", "alphahint", "videomamamaskhint"}
     loose_videos = [
-        f for f in os.listdir(process_path) if is_video_file(f) and os.path.isfile(os.path.join(process_path, f))
+        f
+        for f in os.listdir(process_path)
+        if is_video_file(f)
+        and os.path.isfile(os.path.join(process_path, f))
+        and os.path.splitext(f)[0].lower() not in known_names
     ]
 
     # Check folders needing organization
