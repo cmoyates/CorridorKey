@@ -737,9 +737,9 @@ def run_inference(
             exr_flags = [
                 cv2.IMWRITE_EXR_TYPE,
                 cv2.IMWRITE_EXR_TYPE_HALF,
-                # DWAB fails. PXR24 verified as smallest working format (46KB vs ZIP 56KB vs B44A 688KB)
+                # ZIP — PXR24 deadlocks on some Windows CUDA setups
                 cv2.IMWRITE_EXR_COMPRESSION,
-                cv2.IMWRITE_EXR_COMPRESSION_PXR24,
+                cv2.IMWRITE_EXR_COMPRESSION_ZIP,
             ]
 
             # Save FG
