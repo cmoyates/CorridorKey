@@ -127,6 +127,7 @@ class CorridorKeyEngine:
         auto_despeckle: bool = True,
         despeckle_size: int = 400,
         img_size: int | None = None,
+        tile_skip_mask: "torch.Tensor | None" = None,
     ) -> dict[str, np.ndarray]:
         """
         Process a single frame.
@@ -199,9 +200,9 @@ class CorridorKeyEngine:
 
         if self.fp16:
             with torch.autocast(device_type=self.device.type, dtype=torch.float16):
-                out = self.model(inp_t)
+                out = self.model(inp_t, tile_skip_mask=tile_skip_mask)
         else:
-            out = self.model(inp_t)
+            out = self.model(inp_t, tile_skip_mask=tile_skip_mask)
 
         if handle:
             handle.remove()

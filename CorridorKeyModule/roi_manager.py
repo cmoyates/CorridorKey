@@ -12,12 +12,19 @@ from __future__ import annotations
 
 import cv2
 import numpy as np
+import torch
+import torch.nn.functional as F
 
 from .roi_detector import SubjectDetector
 from .roi_stabilizer import ROIStabilizer
 
 # Threshold for alpha hint mask — pixels below this are considered empty
 ALPHA_HINT_THRESHOLD = 0.01
+
+# Sparse tiling constants
+TILE_DILATION_KERNEL = 65
+TILE_DILATION_PADDING = 32
+REFINER_TILE_SIZE = 512
 
 
 # ── Bucket selection ───────────────────────────────────────────────────────────
@@ -212,6 +219,51 @@ def bbox_from_alpha_hint(
     return (int(x1), int(y1), int(x2 + 1), int(y2 + 1))
 
 
+# ── Sparse tiling ────────────────────────────────────────────────────────────
+
+
+def build_refiner_tile_mask(
+    alpha_hint: np.ndarray,
+    model_input_size: int,
+    tile_size: int = REFINER_TILE_SIZE,
+) -> torch.Tensor:
+    """Build a binary mask indicating which refiner tiles need CNN processing.
+
+    1. Binarize alpha hint (active=1, empty=0)
+    2. Dilate to cover refiner's ~65px receptive field
+    3. Downsample to tile grid
+
+    Args:
+        alpha_hint: [H, W] float32 mask (0-1) at model input resolution.
+        model_input_size: Model's processing resolution (e.g. 2048).
+        tile_size: Refiner tile size (default 512).
+
+    Returns:
+        [grid_h, grid_w] bool tensor — True = run refiner, False = skip.
+    """
+    if alpha_hint.ndim == 3:
+        alpha_hint = alpha_hint[:, :, 0]
+
+    # 1. Binarize
+    binary = (alpha_hint > ALPHA_HINT_THRESHOLD).astype(np.float32)
+    hint_tensor = torch.from_numpy(binary).unsqueeze(0).unsqueeze(0)  # [1,1,H,W]
+
+    # 2. Dilate (max_pool preserves spatial context for refiner RF)
+    dilated = F.max_pool2d(
+        hint_tensor,
+        kernel_size=TILE_DILATION_KERNEL,
+        stride=1,
+        padding=TILE_DILATION_PADDING,
+    )
+
+    # 3. Downsample to tile grid via adaptive avg pool
+    grid_size = model_input_size // tile_size
+    grid = F.adaptive_avg_pool2d(dilated, (grid_size, grid_size))
+
+    # Any non-zero cell → tile is active
+    return grid.view(grid_size, grid_size) > 0
+
+
 # ── ROI Manager (top-level orchestrator) ───────────────────────────────────────
 
 
@@ -314,6 +366,11 @@ class ROIManager:
         # Center-pad into bucket
         img_padded, offset = center_pad_rgb(img_crop, bucket)
         mask_padded = center_pad_mask(mask_crop, bucket)
+
+        # Build sparse tile mask for alpha_hint method
+        if self._roi_method == "alpha_hint":
+            tile_mask = build_refiner_tile_mask(mask_padded, bucket)
+            engine_kwargs["tile_skip_mask"] = tile_mask
 
         # Call engine at bucket size (img_size override → resize is a no-op)
         bucket_result = engine.process_frame(

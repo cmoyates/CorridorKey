@@ -293,7 +293,7 @@ class GreenFormer(nn.Module):
 
         return (output_acc / weight_acc.clamp(min=1e-8)).to(device)
 
-    def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+    def forward(self, x: torch.Tensor, tile_skip_mask: torch.Tensor | None = None) -> dict[str, torch.Tensor]:
         # x: [B, 4, H, W]
         input_size = x.shape[2:]
 
@@ -333,29 +333,25 @@ class GreenFormer(nn.Module):
         # We give the refiner 'Probs' as input features because they are normalized [0,1]
         # Always use full-res RGB — refiner recovers fine detail lost by backbone downsampling
         rgb = x[:, :3, :, :]
-
-        # Feed the Refiner
         coarse_pred = torch.cat([alpha_coarse, fg_coarse], dim=1)  # [B, 4, H, W]
 
         # Refiner outputs DELTA LOGITS
-        # The refiner predicts the correction in valid score space (-inf, inf)
         if self.use_refiner and self.refiner is not None:
-            use_tiling = self.refiner_tile_size is not None and (
+            if tile_skip_mask is not None:
+                delta_logits = self._sparse_refine(rgb, coarse_pred, tile_skip_mask)
+            elif self.refiner_tile_size is not None and (
                 input_size[0] > self.refiner_tile_size or input_size[1] > self.refiner_tile_size
-            )
-            if use_tiling:
+            ):
                 delta_logits = self._tiled_refine(rgb, coarse_pred)
             else:
                 delta_logits = self.refiner(rgb, coarse_pred)
         else:
-            # Zero Deltas
             delta_logits = torch.zeros_like(coarse_pred)
 
         delta_alpha = delta_logits[:, 0:1]
         delta_fg = delta_logits[:, 1:4]
 
         # Residual Addition in Logit Space
-        # This allows infinite correction capability and prevents saturation blocking
         alpha_final_logits = alpha_logits_up + delta_alpha
         fg_final_logits = fg_logits_up + delta_fg
 
@@ -364,3 +360,44 @@ class GreenFormer(nn.Module):
         fg_final = torch.sigmoid(fg_final_logits)
 
         return {"alpha": alpha_final, "fg": fg_final}
+
+    def _sparse_refine(
+        self,
+        rgb: torch.Tensor,
+        coarse_pred: torch.Tensor,
+        tile_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """Run refiner only on tiles marked True in tile_mask.
+
+        Skipped tiles get delta_logits=0 (backbone-only output).
+
+        Args:
+            rgb: [B, 3, H, W] input image.
+            coarse_pred: [B, 4, H, W] coarse predictions.
+            tile_mask: [grid_h, grid_w] bool tensor.
+
+        Returns:
+            [B, 4, H, W] delta logits.
+        """
+        B, C, H, W = coarse_pred.shape
+        grid_h, grid_w = tile_mask.shape
+        tile_h = H // grid_h
+        tile_w = W // grid_w
+
+        delta_logits = torch.zeros_like(coarse_pred)
+
+        for ty in range(grid_h):
+            for tw in range(grid_w):
+                if not tile_mask[ty, tw]:
+                    continue
+
+                y0 = ty * tile_h
+                y1 = y0 + tile_h
+                x0 = tw * tile_w
+                x1 = x0 + tile_w
+
+                rgb_tile = rgb[:, :, y0:y1, x0:x1]
+                coarse_tile = coarse_pred[:, :, y0:y1, x0:x1]
+                delta_logits[:, :, y0:y1, x0:x1] = self.refiner(rgb_tile, coarse_tile)
+
+        return delta_logits

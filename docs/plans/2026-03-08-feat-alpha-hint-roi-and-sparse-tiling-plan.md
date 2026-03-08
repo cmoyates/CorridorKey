@@ -292,12 +292,12 @@ if self._roi_method == "alpha_hint":
 
 #### 2d. Acceptance Criteria
 
-- [ ] `build_refiner_tile_mask()` produces correct grid for various input sizes
-- [ ] Dilation covers full refiner RF (~65px) — verified with test
-- [ ] Skipped tiles produce identical output to backbone-only (delta_logits=0)
-- [ ] Active tiles produce identical output to full-refiner path
-- [ ] `--roi-method yolo` is UNAFFECTED (no tile skipping)
-- [ ] `--roi-method none` is UNAFFECTED
+- [x] `build_refiner_tile_mask()` produces correct grid for various input sizes
+- [x] Dilation covers full refiner RF (~65px) — verified with test
+- [x] Skipped tiles produce identical output to backbone-only (delta_logits=0)
+- [x] Active tiles produce identical output to full-refiner path
+- [x] `--roi-method yolo` is UNAFFECTED (no tile skipping)
+- [x] `--roi-method none` is UNAFFECTED
 - [ ] Memory savings measured on tiles with large green screen regions
 
 ---
