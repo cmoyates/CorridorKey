@@ -382,13 +382,13 @@ Baseline outputs stored in RAM as list of numpy dicts — no .npy files needed f
 
 #### 3f. Acceptance Criteria
 
-- [ ] Runs all three methods end-to-end
-- [ ] Baseline always runs first as ground truth
-- [ ] Timing excludes warmup frame
-- [ ] Memory reset between methods
-- [ ] MAE and % pixels > 1e-2 reported per output channel per method
-- [ ] `--methods` flag allows benchmarking a subset
-- [ ] Device sync before timing (MPS/CUDA)
+- [x] Runs all three methods end-to-end
+- [x] Baseline always runs first as ground truth
+- [x] Timing excludes warmup frame
+- [x] Memory reset between methods
+- [x] MAE and % pixels > 1e-2 reported per output channel per method
+- [x] `--methods` flag allows benchmarking a subset
+- [x] Device sync before timing (MPS/CUDA)
 
 ---
 
