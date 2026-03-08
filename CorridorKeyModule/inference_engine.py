@@ -126,6 +126,7 @@ class CorridorKeyEngine:
         despill_strength: float = 1.0,
         auto_despeckle: bool = True,
         despeckle_size: int = 400,
+        img_size: int | None = None,
     ) -> dict[str, np.ndarray]:
         """
         Process a single frame.
@@ -158,19 +159,22 @@ class CorridorKeyEngine:
         if mask_linear.ndim == 2:
             mask_linear = mask_linear[:, :, np.newaxis]
 
+        # Resolve effective img_size (allows ROI to override with bucket size)
+        effective_img_size = img_size if img_size is not None else self.img_size
+
         # 2. Resize to Model Size
         # If input is linear, we resize in linear to preserve energy/highlights,
         # THEN convert to sRGB for the model.
         if input_is_linear:
             # Resize in Linear
-            img_resized_lin = cv2.resize(image, (self.img_size, self.img_size), interpolation=cv2.INTER_LINEAR)
+            img_resized_lin = cv2.resize(image, (effective_img_size, effective_img_size), interpolation=cv2.INTER_LINEAR)
             # Convert to sRGB for Model
             img_resized = cu.linear_to_srgb(img_resized_lin)
         else:
             # Standard sRGB Resize
-            img_resized = cv2.resize(image, (self.img_size, self.img_size), interpolation=cv2.INTER_LINEAR)
+            img_resized = cv2.resize(image, (effective_img_size, effective_img_size), interpolation=cv2.INTER_LINEAR)
 
-        mask_resized = cv2.resize(mask_linear, (self.img_size, self.img_size), interpolation=cv2.INTER_LINEAR)
+        mask_resized = cv2.resize(mask_linear, (effective_img_size, effective_img_size), interpolation=cv2.INTER_LINEAR)
 
         if mask_resized.ndim == 2:
             mask_resized = mask_resized[:, :, np.newaxis]

@@ -184,11 +184,11 @@ Modify `CorridorKeyEngine.process_frame()` to accept an optional `img_size` over
 4. Extracts the valid region from the output
 
 **Acceptance criteria:**
-- [ ] No resize — crop is placed at 1:1 pixel scale
-- [ ] Smallest fitting bucket selected
-- [ ] Both RGB and mask padded identically
-- [ ] Green fill value (not black)
-- [ ] >2048 falls back to current full-frame behavior
+- [x] No resize — crop is placed at 1:1 pixel scale
+- [x] Smallest fitting bucket selected
+- [x] Both RGB and mask padded identically
+- [x] Green fill value (not black)
+- [x] >2048 falls back to current full-frame behavior
 - [ ] `torch.compile` sees consistent tensor shapes (no graph breaks)
 
 ---
@@ -227,11 +227,11 @@ final_alpha = predicted_alpha * feather_mask + 0.0 * (1.0 - feather_mask)
 Same blending for FG, comp, and processed outputs.
 
 **Acceptance criteria:**
-- [ ] No visible hard edges at crop boundary
-- [ ] Alpha outside crop region is 0.0
-- [ ] Feathered transition is smooth (15px sigma)
-- [ ] All output channels (alpha, fg, comp, processed) are reintegrated
-- [ ] Output dimensions match original input dimensions
+- [x] No visible hard edges at crop boundary
+- [x] Alpha outside crop region is 0.0
+- [x] Feathered transition is smooth (15px sigma)
+- [x] All output channels (alpha, fg, comp, processed) are reintegrated
+- [x] Output dimensions match original input dimensions
 
 ---
 
