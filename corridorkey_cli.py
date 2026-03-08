@@ -24,6 +24,7 @@ import warnings
 from clip_manager import (
     LINUX_MOUNT_ROOT,
     ClipEntry,
+    add_optimization_args,
     generate_alphas,
     is_video_file,
     map_path,
@@ -358,20 +359,7 @@ def main() -> None:
         default="auto",
         help="Compute device (default: auto-detect CUDA > MPS > CPU)",
     )
-    parser.add_argument("--fp16", action=argparse.BooleanOptionalAction, default=True, help="FP16 weight casting")
-    parser.add_argument(
-        "--gpu-postprocess",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Run color math on GPU with cached assets",
-    )
-    parser.add_argument(
-        "--backbone-size", type=int, default=None, help="Backbone resolution (e.g. 1024). None = full res"
-    )
-    parser.add_argument(
-        "--refiner-tile-size", type=int, default=512, help="Refiner tile size (0 = disabled, default 512)"
-    )
-    parser.add_argument("--refiner-tile-overlap", type=int, default=96, help="Refiner tile overlap pixels (default 96)")
+    add_optimization_args(parser)
 
     args = parser.parse_args()
 
