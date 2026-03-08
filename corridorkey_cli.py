@@ -361,9 +361,22 @@ def main() -> None:
     )
     add_optimization_args(parser)
     parser.add_argument(
-        "--no-roi",
-        action="store_true",
-        help="Disable dynamic ROI cropping (process full frame at 2048x2048)",
+        "--roi-method",
+        choices=["yolo", "alpha_hint"],
+        default=None,
+        help="ROI method: yolo (YOLO detection), alpha_hint (mask bbox). Default: disabled (full frame)",
+    )
+    parser.add_argument(
+        "--backend",
+        choices=["auto", "torch", "mlx"],
+        default="auto",
+        help="Inference backend (default: auto-detect MLX on Apple Silicon, else Torch)",
+    )
+    parser.add_argument(
+        "--max-frames",
+        type=int,
+        default=None,
+        help="Limit number of frames to process per clip",
     )
 
     args = parser.parse_args()
@@ -389,7 +402,7 @@ def main() -> None:
                 refiner_tile_overlap=args.refiner_tile_overlap,
                 fp16=args.fp16,
                 gpu_postprocess=args.gpu_postprocess,
-                roi_enabled=not args.no_roi,
+                roi_method=args.roi_method,
             )
         elif args.action == "wizard":
             if not args.win_path:

@@ -8,11 +8,13 @@ import numpy as np
 import pytest
 
 from CorridorKeyModule.roi_manager import (
+    ALPHA_HINT_THRESHOLD,
     BUCKET_SIZES,
     FEATHER_SIGMA,
     PAD_FILL_MASK,
     PAD_FILL_RGB,
     ROIManager,
+    bbox_from_alpha_hint,
     center_pad_mask,
     center_pad_rgb,
     create_feather_mask,
@@ -218,6 +220,58 @@ class TestReintegration:
         assert out["alpha"] is not None
 
 
+# ── Alpha Hint Bounding Box ───────────────────────────────────────────────────
+
+
+class TestBboxFromAlphaHint:
+    def test_returns_none_for_empty_mask(self):
+        mask = np.zeros((1080, 1920), dtype=np.float32)
+        assert bbox_from_alpha_hint(mask) is None
+
+    def test_returns_none_for_below_threshold(self):
+        mask = np.full((100, 100), ALPHA_HINT_THRESHOLD * 0.5, dtype=np.float32)
+        assert bbox_from_alpha_hint(mask) is None
+
+    def test_single_pixel(self):
+        mask = np.zeros((100, 200), dtype=np.float32)
+        mask[50, 75] = 1.0
+        bbox = bbox_from_alpha_hint(mask)
+        assert bbox == (75, 50, 76, 51)
+
+    def test_typical_subject_mask(self):
+        mask = np.zeros((1080, 1920), dtype=np.float32)
+        mask[200:800, 600:1200] = 0.8
+        bbox = bbox_from_alpha_hint(mask)
+        assert bbox == (600, 200, 1200, 800)
+
+    def test_full_frame_mask(self):
+        mask = np.ones((1080, 1920), dtype=np.float32)
+        bbox = bbox_from_alpha_hint(mask)
+        assert bbox == (0, 0, 1920, 1080)
+
+    def test_handles_3d_mask(self):
+        mask = np.zeros((100, 200, 1), dtype=np.float32)
+        mask[10:50, 30:80, 0] = 1.0
+        bbox = bbox_from_alpha_hint(mask)
+        assert bbox == (30, 10, 80, 50)
+
+    def test_exclusive_end_coords(self):
+        """End coords should be exclusive (matching YOLO convention)."""
+        mask = np.zeros((100, 100), dtype=np.float32)
+        mask[10:20, 30:40] = 1.0
+        bbox = bbox_from_alpha_hint(mask)
+        x1, y1, x2, y2 = bbox
+        assert x2 - x1 == 10
+        assert y2 - y1 == 10
+
+    def test_custom_threshold(self):
+        mask = np.full((100, 100), 0.05, dtype=np.float32)
+        # Default threshold (0.01) → should detect
+        assert bbox_from_alpha_hint(mask) is not None
+        # Higher threshold → should not detect
+        assert bbox_from_alpha_hint(mask, threshold=0.1) is None
+
+
 # ── ROIManager Integration ─────────────────────────────────────────────────────
 
 
@@ -242,12 +296,12 @@ class TestROIManager:
         return engine
 
     @staticmethod
-    def _make_manager_with_mock_detector():
+    def _make_manager_with_mock_detector(roi_method="yolo"):
         """Create an ROIManager with the SubjectDetector mocked out."""
         with patch("CorridorKeyModule.roi_manager.SubjectDetector") as mock_cls:
             mock_detector = MagicMock()
             mock_cls.return_value = mock_detector
-            manager = ROIManager()
+            manager = ROIManager(roi_method=roi_method)
         return manager, mock_detector
 
     def test_full_pipeline_returns_correct_shape(self):
@@ -334,4 +388,36 @@ class TestROIManager:
 
         result = manager.process_with_roi(engine, frame, mask)
         # Should still succeed (full-frame fallback)
+        assert result is not None
+
+    def test_alpha_hint_method_does_not_load_yolo(self):
+        """alpha_hint method should not instantiate SubjectDetector."""
+        with patch("CorridorKeyModule.roi_manager.SubjectDetector") as mock_cls:
+            ROIManager(roi_method="alpha_hint")
+            mock_cls.assert_not_called()
+
+    def test_alpha_hint_returns_correct_shape(self):
+        """alpha_hint ROI pipeline should return full-frame sized output."""
+        manager, _ = self._make_manager_with_mock_detector(roi_method="alpha_hint")
+        engine = self._make_mock_engine()
+
+        frame = np.zeros((1080, 1920, 3), dtype=np.float32)
+        mask = np.zeros((1080, 1920), dtype=np.float32)
+        # Paint a subject region in the mask
+        mask[300:700, 600:1200] = 0.9
+
+        result = manager.process_with_roi(engine, frame, mask)
+        for key in ("alpha", "fg", "comp", "processed"):
+            h, w = result[key].shape[:2]
+            assert h == 1080 and w == 1920, f"{key}: {result[key].shape}"
+
+    def test_alpha_hint_empty_mask_falls_back(self):
+        """Empty alpha hint mask → full-frame fallback."""
+        manager, _ = self._make_manager_with_mock_detector(roi_method="alpha_hint")
+        engine = self._make_mock_engine()
+
+        frame = np.zeros((1080, 1920, 3), dtype=np.float32)
+        mask = np.zeros((1080, 1920), dtype=np.float32)
+
+        result = manager.process_with_roi(engine, frame, mask)
         assert result is not None

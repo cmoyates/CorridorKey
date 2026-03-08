@@ -147,14 +147,14 @@ parser.add_argument(
 
 #### 1d. Acceptance Criteria
 
-- [ ] `bbox_from_alpha_hint()` returns correct bbox for non-empty masks
-- [ ] Returns `None` for fully-black masks
-- [ ] 20% padding + lock-and-refine applied identically to YOLO path
-- [ ] `--roi-method yolo` produces identical output to current `--no-roi=False`
-- [ ] `--roi-method none` produces identical output to current `--no-roi=True`
-- [ ] `--roi-method alpha_hint` runs end-to-end without errors
-- [ ] YOLO model is NOT loaded when `--roi-method alpha_hint` (saves ~50ms startup + RAM)
-- [ ] Tests cover: empty mask, single pixel, full-frame mask, typical subject mask
+- [x] `bbox_from_alpha_hint()` returns correct bbox for non-empty masks
+- [x] Returns `None` for fully-black masks
+- [x] 20% padding + lock-and-refine applied identically to YOLO path
+- [x] `--roi-method yolo` produces identical output to current `--no-roi=False`
+- [x] `--roi-method none` produces identical output to current `--no-roi=True`
+- [x] `--roi-method alpha_hint` runs end-to-end without errors
+- [x] YOLO model is NOT loaded when `--roi-method alpha_hint` (saves ~50ms startup + RAM)
+- [x] Tests cover: empty mask, single pixel, full-frame mask, typical subject mask
 
 ---
 

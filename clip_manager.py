@@ -522,7 +522,7 @@ def run_inference(
     refiner_tile_overlap=96,
     fp16=True,
     gpu_postprocess=True,
-    roi_enabled=True,
+    roi_method=None,
 ):
     ready_clips = [c for c in clips if c.input_asset and c.alpha_asset]
 
@@ -605,11 +605,11 @@ def run_inference(
     )
 
     roi_manager = None
-    if roi_enabled:
+    if roi_method is not None:
         from CorridorKeyModule.roi_manager import ROIManager
 
-        roi_manager = ROIManager()
-        logger.info("Dynamic ROI cropping enabled")
+        roi_manager = ROIManager(roi_method=roi_method)
+        logger.info(f"Dynamic ROI cropping enabled (method={roi_method})")
 
     for clip in ready_clips:
         logger.info(f"Running Inference on: {clip.name}")
@@ -958,9 +958,10 @@ if __name__ == "__main__":
     )
     add_optimization_args(parser)
     parser.add_argument(
-        "--no-roi",
-        action="store_true",
-        help="Disable dynamic ROI cropping (process full frame at 2048x2048)",
+        "--roi-method",
+        choices=["yolo", "alpha_hint"],
+        default=None,
+        help="ROI method: yolo (YOLO detection), alpha_hint (mask bbox). Default: disabled (full frame)",
     )
 
     args = parser.parse_args()
@@ -987,7 +988,7 @@ if __name__ == "__main__":
             refiner_tile_overlap=args.refiner_tile_overlap,
             fp16=args.fp16,
             gpu_postprocess=args.gpu_postprocess,
-            roi_enabled=not args.no_roi,
+            roi_method=args.roi_method,
         )
     elif args.action == "wizard":
         if not args.win_path:

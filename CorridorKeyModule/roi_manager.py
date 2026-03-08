@@ -3,7 +3,9 @@
 Orchestrates the full ROI lifecycle:
   detection → stabilization → crop → bucket pad → engine → extract → reintegrate
 
-Steps 3 and 4 of the Dynamic ROI plan.
+Supports two ROI methods:
+  - "yolo": YOLO-based subject detection (requires ultralytics)
+  - "alpha_hint": bounding box from alpha hint mask (no extra model needed)
 """
 
 from __future__ import annotations
@@ -13,6 +15,9 @@ import numpy as np
 
 from .roi_detector import SubjectDetector
 from .roi_stabilizer import ROIStabilizer
+
+# Threshold for alpha hint mask — pixels below this are considered empty
+ALPHA_HINT_THRESHOLD = 0.01
 
 
 # ── Bucket selection ───────────────────────────────────────────────────────────
@@ -176,6 +181,37 @@ def reintegrate(
     return output
 
 
+# ── Alpha hint bbox ───────────────────────────────────────────────────────────
+
+
+def bbox_from_alpha_hint(
+    mask: np.ndarray,
+    threshold: float = ALPHA_HINT_THRESHOLD,
+) -> tuple[int, int, int, int] | None:
+    """Find bounding box of non-black pixels in an alpha hint mask.
+
+    Args:
+        mask: [H, W] or [H, W, 1] float32 mask (0-1).
+        threshold: Pixel intensity below this is considered empty.
+
+    Returns:
+        (x1, y1, x2, y2) with exclusive end coords, or None if mask is entirely empty.
+    """
+    if mask.ndim == 3:
+        mask = mask[:, :, 0]
+
+    active = mask > threshold
+    if not active.any():
+        return None
+
+    rows = np.any(active, axis=1)
+    cols = np.any(active, axis=0)
+    y1, y2 = np.where(rows)[0][[0, -1]]
+    x1, x2 = np.where(cols)[0][[0, -1]]
+
+    return (int(x1), int(y1), int(x2 + 1), int(y2 + 1))
+
+
 # ── ROI Manager (top-level orchestrator) ───────────────────────────────────────
 
 
@@ -185,7 +221,8 @@ class ROIManager:
     Owns: detection → stabilization → crop → bucket pad → engine call → reintegration.
 
     Usage:
-        manager = ROIManager()
+        manager = ROIManager(roi_method="yolo")   # YOLO detection
+        manager = ROIManager(roi_method="alpha_hint")  # alpha hint bbox
         # In frame loop:
         result = manager.process_with_roi(engine, img_srgb, mask_linear, **kwargs)
     """
@@ -193,12 +230,17 @@ class ROIManager:
     def __init__(
         self,
         *,
+        roi_method: str = "yolo",
         confidence_threshold: float = 0.3,
         min_cutoff: float = 1.0,
         beta: float = 0.007,
         feather_sigma: int = FEATHER_SIGMA,
     ) -> None:
-        self._detector = SubjectDetector(confidence_threshold=confidence_threshold)
+        self._roi_method = roi_method
+        if roi_method == "yolo":
+            self._detector = SubjectDetector(confidence_threshold=confidence_threshold)
+        else:
+            self._detector = None
         self._stabilizer: ROIStabilizer | None = None
         self._frame_idx: int = 0
         self._min_cutoff = min_cutoff
@@ -239,8 +281,11 @@ class ROIManager:
                 beta=self._beta,
             )
 
-        # Step 1: Detect subject
-        raw_bbox = self._detector.detect(image)
+        # Step 1: Get raw bbox from selected method
+        if self._roi_method == "yolo":
+            raw_bbox = self._detector.detect(image)
+        else:  # alpha_hint
+            raw_bbox = bbox_from_alpha_hint(mask_linear)
 
         # Step 2: Stabilize + lock
         crop_box = self._stabilizer.update(float(self._frame_idx), raw_bbox)
