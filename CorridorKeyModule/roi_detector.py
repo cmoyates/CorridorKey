@@ -9,7 +9,6 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-
 # YOLO input resolution — the standard size YOLOv11 expects
 YOLO_INPUT_SIZE = 640
 

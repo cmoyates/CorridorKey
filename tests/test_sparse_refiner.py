@@ -11,16 +11,13 @@ Covers:
 from __future__ import annotations
 
 import numpy as np
-import pytest
 import torch
 
 from CorridorKeyModule.roi_manager import (
     ALPHA_HINT_THRESHOLD,
     REFINER_TILE_SIZE,
-    TILE_DILATION_KERNEL,
     build_refiner_tile_mask,
 )
-
 
 # ── build_refiner_tile_mask tests ─────────────────────────────────────────────
 
@@ -124,7 +121,6 @@ class TestSparseRefineIntegration:
 
     def test_all_false_mask_produces_zero_deltas(self):
         """When tile_mask is all-False, delta_logits should be all zeros."""
-        from CorridorKeyModule.core.model_transformer import GreenFormer
 
         # Create a minimal refiner-only test
         refiner = torch.nn.Identity()  # placeholder
@@ -185,7 +181,7 @@ class TestROIManagerTilePassthrough:
 
     def test_alpha_hint_passes_tile_mask(self):
         """alpha_hint method should add tile_skip_mask to engine kwargs."""
-        from unittest.mock import MagicMock, call, patch
+        from unittest.mock import MagicMock
 
         from CorridorKeyModule.roi_manager import ROIManager
 

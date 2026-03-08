@@ -116,7 +116,7 @@ def interactive_wizard(win_path: str, device: str | None = None) -> None:
 
     # 1. Resolve Path
     print(f"Windows Path: {win_path}")
-    
+
     # Check if we are running locally where the Windows path exists
     if os.path.exists(win_path):
         process_path = win_path

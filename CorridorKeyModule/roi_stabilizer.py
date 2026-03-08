@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import math
 
-
 # ── 1-Euro Filter ──────────────────────────────────────────────────────────────
 
 class OneEuroFilter:

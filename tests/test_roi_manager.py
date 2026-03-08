@@ -5,12 +5,10 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import numpy as np
-import pytest
 
 from CorridorKeyModule.roi_manager import (
     ALPHA_HINT_THRESHOLD,
     BUCKET_SIZES,
-    FEATHER_SIGMA,
     PAD_FILL_MASK,
     PAD_FILL_RGB,
     ROIManager,
@@ -22,7 +20,6 @@ from CorridorKeyModule.roi_manager import (
     reintegrate,
     select_bucket,
 )
-
 
 # ── Bucket Selection ──────────────────────────────────────────────────────────
 

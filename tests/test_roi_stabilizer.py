@@ -2,18 +2,12 @@
 
 from __future__ import annotations
 
-import pytest
-
 from CorridorKeyModule.roi_stabilizer import (
-    BOUNDARY_THRESHOLD,
-    MIN_LOCK_FRAMES,
-    PADDING_FRACTION,
     CropLockManager,
     OneEuroFilter,
     ROIStabilizer,
     _pad_bbox,
 )
-
 
 # ── 1-Euro Filter ──────────────────────────────────────────────────────────────
 
