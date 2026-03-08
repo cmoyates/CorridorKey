@@ -104,11 +104,6 @@ class CorridorKeyEngine:
         if len(unexpected) > 0:
             print(f"[Warning] Unexpected keys: {unexpected}")
 
-        # Cast weights to FP16 — autocast already handles FP16 activations,
-        # this halves static VRAM footprint (~400MB savings)
-        if self.fp16:
-            model = model.half()
-
         return model
 
     def _get_checkerboard(self, width: int, height: int) -> tuple[torch.Tensor, torch.Tensor]:
@@ -198,7 +193,10 @@ class CorridorKeyEngine:
 
             handle = self.model.refiner.register_forward_hook(scale_hook)
 
-        with torch.autocast(device_type=self.device.type, dtype=torch.float16):
+        if self.fp16:
+            with torch.autocast(device_type=self.device.type, dtype=torch.float16):
+                out = self.model(inp_t)
+        else:
             out = self.model(inp_t)
 
         if handle:

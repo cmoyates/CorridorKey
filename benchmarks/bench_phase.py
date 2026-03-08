@@ -233,6 +233,8 @@ def run_benchmark(engine, frames, masks, device: str) -> tuple[list[dict], dict,
 
     mem_before = measure_memory_before(device)
 
+    print(f"  Running benchmark ({len(frames)} frames, first is warmup)...")
+
     for i, (frame, mask) in enumerate(zip(frames, masks, strict=True)):
         # Sync before timing
         if device == "cuda":
