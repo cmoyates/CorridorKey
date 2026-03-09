@@ -11,6 +11,7 @@ import torch.nn.functional as F
 
 from .core import color_utils as cu
 from .core.model_transformer import GreenFormer
+from .model_utils import patch_hiera_global_attention
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,10 @@ class CorridorKeyEngine:
             print(f"[Warning] Missing keys: {missing}")
         if len(unexpected) > 0:
             print(f"[Warning] Unexpected keys: {unexpected}")
+
+        # Patch Hiera global attention: force 4D contiguous tensors for SDPA
+        # so FlashAttention/memory-efficient kernels are used instead of Math fallback
+        patch_hiera_global_attention(model.encoder.model)
 
         return model
 
