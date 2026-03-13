@@ -51,22 +51,24 @@ Tracks all optimization experiments on the `feature/mlx-optimization` branch. Ea
 
 ---
 
-## Remaining Issues
+## Investigated and Closed (no action needed)
 
-| # | Title | Priority | Status |
-|---|---|---|---|
-| 6 | sRGB/linear conversions to MLX GPU | P3c | Open |
-| 8 | PyAV VideoToolbox hw decode | P5 | Open |
-| 11 | mx.async_eval benefit when GPU saturated | Investigation | Open |
-| 12 | PyAV min version for hwaccel | Investigation | Open |
-| 13 | MLX thread safety with Metal | Investigation | Open |
+| # | Title | Finding |
+|---|---|---|
+| 6 | sRGB/linear to MLX GPU | Diminishing returns; postprocess already 2.9ms with skip |
+| 8 | PyAV VideoToolbox hw decode | Reader already faster than inference (4.6ms vs 2139ms) |
+| 11 | mx.async_eval when GPU saturated | Not applicable; threading handles I/O overlap |
+| 12 | PyAV min version for hwaccel | PyAV 16.1.0 supports it; not needed per #8 |
+| 13 | MLX thread safety with Metal | NOT SAFE; concurrent mx calls crash Metal encoder |
 
 ---
 
-## Dead Ends (from prior research)
+## Dead Ends (from prior research + this round)
 
 See `HANDOFF_TO_CORRIDORKEY.md` Section 5 for full list. Key items:
 - Temporal blending/caching: edge artifacts at all blend ratios
 - Int8 quantization: 11% slower on Apple Silicon
 - Backbone resolution decoupling: edge degradation at even 12% downscale
 - GPU stream parallelism: single GPU on Apple Silicon
+- MLX concurrent threads: Metal command encoder crashes on concurrent calls
+- GPU-side colorspace: requires cross-repo API change for marginal gain
