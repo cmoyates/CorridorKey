@@ -142,12 +142,20 @@ def _wrap_mlx_output(
 
     # alpha: uint8 [H,W] → float32 [H,W,1]
     alpha_raw = raw["alpha"]
-    alpha = alpha_raw.astype(np.float32) / 255.0
+    # Zero-copy when possible: avoid .astype if already float32
+    if alpha_raw.dtype == np.uint8:
+        alpha = alpha_raw.astype(np.float32) / np.float32(255.0)
+    else:
+        alpha = np.asarray(alpha_raw, dtype=np.float32)
     if alpha.ndim == 2:
         alpha = alpha[:, :, np.newaxis]
 
     # fg: uint8 [H,W,3] → float32 [H,W,3] (sRGB)
-    fg = raw["fg"].astype(np.float32) / 255.0
+    fg_raw = raw["fg"]
+    if fg_raw.dtype == np.uint8:
+        fg = fg_raw.astype(np.float32) / np.float32(255.0)
+    else:
+        fg = np.asarray(fg_raw, dtype=np.float32)
 
     result: dict = {
         "alpha": alpha,
@@ -157,9 +165,17 @@ def _wrap_mlx_output(
     if not need_postprocess:
         return result
 
-    # Apply despeckle (MLX stubs this)
+    # Apply despeckle — skip if alpha is already clean (low noise)
     if auto_despeckle:
-        processed_alpha = cu.clean_matte(alpha, area_threshold=despeckle_size, dilation=25, blur_size=5)
+        # Adaptive bypass: if alpha is mostly binary (near 0 or 1), skip expensive CCL
+        alpha_2d = alpha[:, :, 0] if alpha.ndim == 3 else alpha
+        mid_range = np.count_nonzero((alpha_2d > 0.05) & (alpha_2d < 0.95))
+        mid_ratio = mid_range / alpha_2d.size
+        if mid_ratio < 0.01:
+            # Less than 1% of pixels in transition zone — matte is clean
+            processed_alpha = alpha
+        else:
+            processed_alpha = cu.clean_matte(alpha, area_threshold=despeckle_size, dilation=25, blur_size=5)
     else:
         processed_alpha = alpha
 
@@ -204,6 +220,33 @@ class _MLXEngineAdapter:
     ):
         """Delegate to MLX engine, then normalize output to Torch contract."""
         import time
+
+        # Fast path: skip inference if mask is all-background or all-foreground
+        mask_2d = mask_linear[:, :, 0] if mask_linear.ndim == 3 else mask_linear
+        mask_min, mask_max = float(mask_2d.min()), float(mask_2d.max())
+
+        if mask_max < 0.01:
+            # Pure background — alpha=0, fg=black
+            h, w = image.shape[:2]
+            result = {
+                "alpha": np.zeros((h, w, 1), dtype=np.float32),
+                "fg": np.zeros((h, w, 3), dtype=np.float32),
+                "_timing": {"mlx_inference": 0.0, "postprocess": 0.0},
+            }
+            logger.debug("Frame skipped: mask is all-background")
+            return result
+
+        if mask_min > 0.99:
+            # Pure foreground — alpha=1, fg=input
+            h, w = image.shape[:2]
+            fg = image if image.dtype == np.float32 else image.astype(np.float32) / 255.0
+            result = {
+                "alpha": np.ones((h, w, 1), dtype=np.float32),
+                "fg": fg,
+                "_timing": {"mlx_inference": 0.0, "postprocess": 0.0},
+            }
+            logger.debug("Frame skipped: mask is all-foreground")
+            return result
 
         # MLX engine expects uint8 input — convert if float
         if image.dtype != np.uint8:
