@@ -174,6 +174,8 @@ class _MLXEngineAdapter:
         despeckle_size=400,
     ):
         """Delegate to MLX engine, then normalize output to Torch contract."""
+        import time
+
         # MLX engine expects uint8 input — convert if float
         if image.dtype != np.uint8:
             image_u8 = (np.clip(image, 0.0, 1.0) * 255).astype(np.uint8)
@@ -189,6 +191,7 @@ class _MLXEngineAdapter:
         if mask_u8.ndim == 3:
             mask_u8 = mask_u8[:, :, 0]
 
+        t_mlx_start = time.perf_counter()
         raw = self._engine.process_frame(
             image_u8,
             mask_u8,
@@ -199,8 +202,19 @@ class _MLXEngineAdapter:
             auto_despeckle=False,
             despeckle_size=despeckle_size,
         )
+        t_mlx = time.perf_counter() - t_mlx_start
 
-        return _wrap_mlx_output(raw, despill_strength, auto_despeckle, despeckle_size)
+        t_post_start = time.perf_counter()
+        result = _wrap_mlx_output(raw, despill_strength, auto_despeckle, despeckle_size)
+        t_post = time.perf_counter() - t_post_start
+
+        logger.debug(
+            "MLX frame: inference=%.0fms  postprocess=%.0fms",
+            t_mlx * 1000,
+            t_post * 1000,
+        )
+
+        return result
 
 
 DEFAULT_MLX_TILE_SIZE = 512
