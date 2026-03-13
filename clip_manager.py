@@ -19,7 +19,7 @@ os.environ["OPENCV_IO_ENABLE_OPENEXR"] = "1"
 import cv2
 import numpy as np
 
-from backend.frame_io import EXR_WRITE_FLAGS, read_image_frame
+from backend.frame_io import EXR_WRITE_FLAGS, EXR_WRITE_FLAGS_FAST
 from device_utils import resolve_device
 
 if TYPE_CHECKING:
@@ -42,6 +42,7 @@ class InferenceSettings:
     despeckle_size: int = 400
     refiner_scale: float = 1.0
     enabled_outputs: frozenset[str] = frozenset({"fg", "matte", "comp", "processed"})
+    fast_exr: bool = False
 
     VALID_OUTPUTS: ClassVar[frozenset[str]] = frozenset({"fg", "matte", "comp", "processed"})
 
@@ -701,8 +702,10 @@ def _writer_worker(
     on_frame_complete: Callable | None,
     error_event: threading.Event,
     enabled_outputs: frozenset[str] = frozenset({"fg", "matte", "comp", "processed"}),
+    fast_exr: bool = False,
 ):
     """Write inference results to disk and fire progress callbacks."""
+    exr_flags = EXR_WRITE_FLAGS_FAST if fast_exr else EXR_WRITE_FLAGS
     try:
         while True:
             item = write_q.get()
@@ -727,10 +730,10 @@ def _writer_worker(
 
             if "fg" in enabled_outputs:
                 fg_bgr = cv2.cvtColor(res["fg"], cv2.COLOR_RGB2BGR)
-                cv2.imwrite(os.path.join(fg_dir, f"{input_stem}.exr"), fg_bgr, EXR_WRITE_FLAGS)
+                cv2.imwrite(os.path.join(fg_dir, f"{input_stem}.exr"), fg_bgr, exr_flags)
 
             if "matte" in enabled_outputs:
-                cv2.imwrite(os.path.join(matte_dir, f"{input_stem}.exr"), pred_alpha, EXR_WRITE_FLAGS)
+                cv2.imwrite(os.path.join(matte_dir, f"{input_stem}.exr"), pred_alpha, exr_flags)
 
             if "comp" in enabled_outputs and "comp" in res:
                 comp_srgb = res["comp"]
@@ -742,7 +745,7 @@ def _writer_worker(
             if "processed" in enabled_outputs and "processed" in res:
                 proc_rgba = res["processed"]
                 proc_bgra = cv2.cvtColor(proc_rgba, cv2.COLOR_RGBA2BGRA)
-                cv2.imwrite(os.path.join(proc_dir, f"{input_stem}.exr"), proc_bgra, EXR_WRITE_FLAGS)
+                cv2.imwrite(os.path.join(proc_dir, f"{input_stem}.exr"), proc_bgra, exr_flags)
 
             t_write = time.perf_counter() - t_write_start
             phase_times["write"].append(t_write)
@@ -852,7 +855,7 @@ def run_inference(
             args=(
                 write_q, fg_dir, matte_dir, comp_dir, proc_dir,
                 num_frames, phase_times, on_frame_complete, error_event,
-                settings.enabled_outputs,
+                settings.enabled_outputs, settings.fast_exr,
             ),
             daemon=True,
         )
