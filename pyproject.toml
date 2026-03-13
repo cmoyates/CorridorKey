@@ -40,6 +40,8 @@ dependencies = [
     # CLI framework + terminal output
     "typer>=0.12",
     "rich>=13",
+    # MLX backend (Apple Silicon only)
+    "corridorkey-mlx ; sys_platform == 'darwin' and platform_machine == 'arm64' and python_version >= '3.11'",
 ]
 
 [dependency-groups]
@@ -110,3 +112,4 @@ torch = { index = "pytorch", marker = "sys_platform != 'darwin'" }
 torchvision = { index = "pytorch", marker = "sys_platform != 'darwin'" }
 # Use Hiera fix in order to utilize the FlashAttention Kernel
 timm = { git = "https://github.com/Raiden129/pytorch-image-models-fix", branch = "fix/hiera-flash-attention-global-4d" }
+corridorkey-mlx = { git = "https://github.com/cmoyates/corridorkey-mlx.git", branch = "feat/claude-autoresearch-lab", marker = "sys_platform == 'darwin' and platform_machine == 'arm64' and python_version >= '3.11'" }
