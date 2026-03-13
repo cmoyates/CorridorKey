@@ -205,6 +205,10 @@ class CorridorKeyEngine:
         if handle:
             handle.remove()
 
+        # Free cached CUDA allocations between stages to reduce peak VRAM
+        if self.device.type == "cuda":
+            torch.cuda.empty_cache()
+
         pred_alpha = out["alpha"]
         pred_fg = out["fg"]  # Output is sRGB (Sigmoid)
 
