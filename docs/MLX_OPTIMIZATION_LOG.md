@@ -49,6 +49,29 @@ Tracks all optimization experiments on the `feature/mlx-optimization` branch. Ea
 **Measured**: Infer 3031ms → 2139ms (29% faster). ~6 tiles/frame vs 15.
 **Fidelity**: No NaN/Inf, proper [0,1] range. Overlap 128 matches handoff doc.
 
+### 7. CUDA Cache Clearing (#18) — `0ec9749`
+
+**What**: `torch.cuda.empty_cache()` after model forward pass.
+**Impact**: Reduces peak VRAM on constrained CUDA GPUs. No effect on MLX.
+
+### 8. LUT-Accelerated sRGB Conversions — `1409938`
+
+**What**: 65536-entry float32 LUT replaces `np.power` in srgb_to_linear/linear_to_srgb.
+**Measured**: sRGB ops 2x faster (27ms → 13ms each). Postprocess 159ms → 117ms.
+**Fidelity**: Max error 0.0002 (well within 5e-3 Tier 1 threshold).
+
+---
+
+## From CorridorKey-Engine Fork (99oblivius)
+
+| # | What | Outcome |
+|---|------|---------|
+| #14 | FlashAttention for Hiera | Already in timm 1.0.25 |
+| #15 | GPU postprocessing | Deferred — CUDA-only, significant refactor |
+| #16 | Deferred DMA + triple buffering | Deferred — CUDA-only |
+| #17 | Multi-worker write pool | Tested, no improvement (CPU contention) |
+| #18 | CUDA cache clearing | Implemented |
+
 ---
 
 ## Investigated and Closed (no action needed)
