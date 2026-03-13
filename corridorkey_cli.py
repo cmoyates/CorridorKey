@@ -273,6 +273,10 @@ def run_inference_cmd(
         Optional[str],
         typer.Option("--outputs", help="Comma-separated outputs to write: fg,matte,comp,processed (default: all)"),
     ] = None,
+    fast_exr: Annotated[
+        bool,
+        typer.Option("--fast-exr/--compressed-exr", help="Uncompressed EXR for ~10x faster writes (12%% larger)"),
+    ] = False,
 ) -> None:
     """Run CorridorKey inference on clips with Input + AlphaHint.
 
@@ -304,6 +308,7 @@ def run_inference_cmd(
             despeckle_size=despeckle_size if despeckle_size is not None else 400,
             refiner_scale=refiner,
             enabled_outputs=enabled_outputs,
+            fast_exr=fast_exr,
         )
     else:
         settings = _prompt_inference_settings(
@@ -319,6 +324,7 @@ def run_inference_cmd(
             auto_despeckle=settings.auto_despeckle,
             despeckle_size=settings.despeckle_size,
             refiner_scale=settings.refiner_scale,
+            fast_exr=fast_exr,
             enabled_outputs=enabled_outputs,
         )
 
