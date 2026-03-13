@@ -670,8 +670,13 @@ def run_inference(
         if on_clip_start:
             on_clip_start(clip.name, num_frames)
 
+        import time
+
+        phase_times = {"read": [], "infer": [], "postprocess": [], "write": []}
+
         for i in range(num_frames):
             # 1. Read Input
+            t_read_start = time.perf_counter()
             img_srgb = None
             input_stem = f"{i:05d}"
 
@@ -739,6 +744,10 @@ def run_inference(
                 )
 
             # 3. Process
+            t_read = time.perf_counter() - t_read_start
+            phase_times["read"].append(t_read)
+
+            t_infer_start = time.perf_counter()
             USE_STRAIGHT_MODEL = True
             res = engine.process_frame(
                 img_srgb,
@@ -751,10 +760,14 @@ def run_inference(
                 refiner_scale=settings.refiner_scale,
             )
 
+            t_infer = time.perf_counter() - t_infer_start
+            phase_times["infer"].append(t_infer)
+
             pred_fg = res["fg"]  # sRGB
             pred_alpha = res["alpha"]  # Linear
 
             # 4. Save (EXR half-float, PXR24 compression — see backend/frame_io.py)
+            t_write_start = time.perf_counter()
 
             # Save FG
             # pred_fg is RGB 0-1 float. Convert to BGR for OpenCV
@@ -781,8 +794,29 @@ def run_inference(
                 proc_bgra = cv2.cvtColor(proc_rgba, cv2.COLOR_RGBA2BGRA)
                 cv2.imwrite(os.path.join(proc_dir, f"{input_stem}.exr"), proc_bgra, EXR_WRITE_FLAGS)
 
+            t_write = time.perf_counter() - t_write_start
+            phase_times["write"].append(t_write)
+
             if on_frame_complete:
                 on_frame_complete(i, num_frames)
+
+        # Log per-phase timing summary (skip first frame as warmup)
+        if len(phase_times["read"]) > 1:
+            import statistics
+
+            warmup_skip = 1
+            logger.info(f"--- Timing summary for {clip.name} (frames {warmup_skip}-{len(phase_times['read'])-1}, median ms) ---")
+            for phase, times in phase_times.items():
+                steady = times[warmup_skip:]
+                if steady:
+                    med = statistics.median(steady) * 1000
+                    total = sum(steady) * 1000
+                    logger.info(f"  {phase:>12s}: {med:7.1f} ms/frame  |  {total:8.1f} ms total")
+            all_steady = [sum(t) for t in zip(*(times[warmup_skip:] for times in phase_times.values()))]
+            if all_steady:
+                med_total = statistics.median(all_steady) * 1000
+                logger.info(f"  {'TOTAL':>12s}: {med_total:7.1f} ms/frame")
+            logger.info("---")
 
         if input_cap:
             input_cap.release()
