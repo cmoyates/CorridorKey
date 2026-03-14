@@ -5,6 +5,7 @@ import glob
 import logging
 import os
 import shutil
+import statistics
 import sys
 import threading
 import time
@@ -46,6 +47,9 @@ class InferenceSettings:
 
     VALID_OUTPUTS: ClassVar[frozenset[str]] = frozenset({"fg", "matte", "comp", "processed"})
 
+
+# Async I/O pipeline: one frame in-flight + one buffered
+_ASYNC_QUEUE_DEPTH = 2
 
 # Core Paths
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -603,16 +607,17 @@ def run_videomama(
 def _reader_worker(
     read_q: Queue,
     num_frames: int,
-    input_cap,
-    alpha_cap,
+    input_cap: cv2.VideoCapture | None,
+    alpha_cap: cv2.VideoCapture | None,
     input_files: list[str],
     alpha_files: list[str],
     input_asset_path: str,
     alpha_asset_path: str,
-    input_is_linear: bool,
     error_event: threading.Event,
 ):
     """Decode input + alpha frames and enqueue them for inference."""
+    from backend.frame_io import read_image_frame, read_mask_frame
+
     try:
         for i in range(num_frames):
             if error_event.is_set():
@@ -620,6 +625,7 @@ def _reader_worker(
 
             t_read_start = time.perf_counter()
             img_srgb = None
+            mask_linear = None
             input_stem = f"{i:05d}"
 
             # -- Read input frame --
@@ -627,29 +633,13 @@ def _reader_worker(
                 ret, frame = input_cap.read()
                 if not ret:
                     break
-                img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                img_srgb = img_rgb.astype(np.float32) / 255.0
-                input_stem = f"{i:05d}"
+                img_srgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
             else:
                 fpath = os.path.join(input_asset_path, input_files[i])
                 input_stem = os.path.splitext(input_files[i])[0]
-
-                is_exr = fpath.lower().endswith(".exr")
-                if is_exr:
-                    img_linear = cv2.imread(fpath, cv2.IMREAD_UNCHANGED)
-                    if img_linear is None:
-                        continue
-                    img_linear_rgb = cv2.cvtColor(img_linear, cv2.COLOR_BGR2RGB)
-                    img_srgb = np.maximum(img_linear_rgb, 0.0)
-                else:
-                    img_bgr = cv2.imread(fpath)
-                    if img_bgr is None:
-                        continue
-                    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-                    img_srgb = img_rgb.astype(np.float32) / 255.0
+                img_srgb = read_image_frame(fpath)
 
             # -- Read alpha mask --
-            mask_linear = None
             if alpha_cap:
                 ret, frame = alpha_cap.read()
                 if not ret:
@@ -657,25 +647,11 @@ def _reader_worker(
                 mask_linear = frame[:, :, 2].astype(np.float32) / 255.0
             else:
                 fpath = os.path.join(alpha_asset_path, alpha_files[i])
-                mask_in = cv2.imread(fpath, cv2.IMREAD_ANYDEPTH | cv2.IMREAD_UNCHANGED)
+                mask_linear = read_mask_frame(fpath)
 
-                if mask_in is None:
-                    continue
-
-                if mask_in.ndim == 3:
-                    if mask_in.shape[2] == 3:
-                        mask_linear = mask_in[:, :, 0]
-                    else:
-                        mask_linear = mask_in
-                else:
-                    mask_linear = mask_in
-
-                if mask_linear.dtype == np.uint8:
-                    mask_linear = mask_linear.astype(np.float32) / 255.0
-                elif mask_linear.dtype == np.uint16:
-                    mask_linear = mask_linear.astype(np.float32) / 65535.0
-                else:
-                    mask_linear = mask_linear.astype(np.float32)
+            if img_srgb is None or mask_linear is None:
+                logger.warning("Skipping frame %d: failed to read input or mask", i)
+                continue
 
             if mask_linear.shape[:2] != img_srgb.shape[:2]:
                 mask_linear = cv2.resize(
@@ -685,7 +661,7 @@ def _reader_worker(
             t_read = time.perf_counter() - t_read_start
             read_q.put((i, input_stem, img_srgb, mask_linear, t_read))
     except Exception as e:
-        logger.error(f"Reader thread error: {e}")
+        logger.error("Reader thread error: %s", e)
         error_event.set()
     finally:
         read_q.put(None)  # sentinel
@@ -697,9 +673,7 @@ def _writer_worker(
     matte_dir: str,
     comp_dir: str,
     proc_dir: str,
-    num_frames: int,
     phase_times: dict,
-    on_frame_complete: Callable | None,
     error_event: threading.Event,
     enabled_outputs: frozenset[str] = frozenset({"fg", "matte", "comp", "processed"}),
     fast_exr: bool = False,
@@ -747,9 +721,6 @@ def _writer_worker(
 
             t_write = time.perf_counter() - t_write_start
             phase_times["write"].append(t_write)
-
-            if on_frame_complete:
-                on_frame_complete(i, num_frames)
     except Exception as e:
         logger.error(f"Writer thread error: {e}")
         error_event.set()
@@ -830,12 +801,14 @@ def run_inference(
         if on_clip_start:
             on_clip_start(clip.name, num_frames)
 
+        # phase_times lists are appended from both main and writer threads.
+        # list.append is atomic under CPython's GIL. If targeting free-threaded
+        # Python (3.13t+), protect with a lock.
         phase_times: dict[str, list[float]] = {"read": [], "infer": [], "postprocess": [], "write": []}
 
         # -- Async I/O pipeline: reader → inference → writer --
-        QUEUE_DEPTH = 2
-        read_q: Queue = Queue(maxsize=QUEUE_DEPTH)
-        write_q: Queue = Queue(maxsize=QUEUE_DEPTH)
+        read_q: Queue = Queue(maxsize=_ASYNC_QUEUE_DEPTH)
+        write_q: Queue = Queue(maxsize=_ASYNC_QUEUE_DEPTH)
         error_event = threading.Event()
 
         reader = threading.Thread(
@@ -849,7 +822,6 @@ def run_inference(
                 alpha_files,
                 clip.input_asset.path,
                 clip.alpha_asset.path,
-                settings.input_is_linear,
                 error_event,
             ),
             daemon=True,
@@ -862,9 +834,7 @@ def run_inference(
                 matte_dir,
                 comp_dir,
                 proc_dir,
-                num_frames,
                 phase_times,
-                on_frame_complete,
                 error_event,
                 settings.enabled_outputs,
                 settings.fast_exr,
@@ -876,41 +846,48 @@ def run_inference(
         writer.start()
 
         # Main thread: inference loop
-        while True:
-            item = read_q.get()
-            if item is None:
-                break
-            if error_event.is_set():
-                break
+        try:
+            while True:
+                item = read_q.get()
+                if item is None or error_event.is_set():
+                    break
 
-            i, input_stem, img_srgb, mask_linear, t_read = item
-            phase_times["read"].append(t_read)
+                i, input_stem, img_srgb, mask_linear, t_read = item
+                phase_times["read"].append(t_read)
 
-            t_infer_start = time.perf_counter()
-            res = engine.process_frame(
-                img_srgb,
-                mask_linear,
-                input_is_linear=settings.input_is_linear,
-                fg_is_straight=True,
-                despill_strength=settings.despill_strength,
-                auto_despeckle=settings.auto_despeckle,
-                despeckle_size=settings.despeckle_size,
-                refiner_scale=settings.refiner_scale,
-                enabled_outputs=settings.enabled_outputs,
-            )
-            t_infer = time.perf_counter() - t_infer_start
+                t_infer_start = time.perf_counter()
+                engine_kwargs: dict = dict(
+                    input_is_linear=settings.input_is_linear,
+                    fg_is_straight=True,
+                    despill_strength=settings.despill_strength,
+                    auto_despeckle=settings.auto_despeckle,
+                    despeckle_size=settings.despeckle_size,
+                    refiner_scale=settings.refiner_scale,
+                )
+                # Only MLX adapter accepts enabled_outputs; Torch engine does not
+                if hasattr(engine, "_engine"):
+                    engine_kwargs["enabled_outputs"] = settings.enabled_outputs
+                res = engine.process_frame(img_srgb, mask_linear, **engine_kwargs)
+                t_infer = time.perf_counter() - t_infer_start
 
-            write_q.put((i, input_stem, res, t_infer))
+                if error_event.is_set():
+                    break
+                write_q.put((i, input_stem, res, t_infer))
 
-        # Signal writer to drain and stop
-        write_q.put(None)
+                if on_frame_complete:
+                    on_frame_complete(i, num_frames)
+        finally:
+            # Always unblock writer — prevents deadlock if inference throws
+            write_q.put(None)
+
         writer.join()
         reader.join()
 
+        if error_event.is_set():
+            logger.error("Pipeline error — check reader/writer thread logs above")
+
         # Log per-phase timing summary (skip first frame as warmup)
         if len(phase_times["read"]) > 1:
-            import statistics
-
             warmup_skip = 1
             n_frames = len(phase_times["read"]) - 1
             logger.info(f"--- Timing summary for {clip.name} (frames {warmup_skip}-{n_frames}, median ms) ---")
