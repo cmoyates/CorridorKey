@@ -613,6 +613,7 @@ def _reader_worker(
     alpha_files: list[str],
     input_asset_path: str,
     alpha_asset_path: str,
+    input_is_linear: bool,
     error_event: threading.Event,
 ):
     """Decode input + alpha frames and enqueue them for inference."""
@@ -637,7 +638,7 @@ def _reader_worker(
             else:
                 fpath = os.path.join(input_asset_path, input_files[i])
                 input_stem = os.path.splitext(input_files[i])[0]
-                img_srgb = read_image_frame(fpath)
+                img_srgb = read_image_frame(fpath, gamma_correct_exr=not input_is_linear)
 
             # -- Read alpha mask --
             if alpha_cap:
@@ -822,6 +823,7 @@ def run_inference(
                 alpha_files,
                 clip.input_asset.path,
                 clip.alpha_asset.path,
+                settings.input_is_linear,
                 error_event,
             ),
             daemon=True,
