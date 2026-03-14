@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import functools
 import glob
 import logging
 import os
 import platform
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -20,6 +22,11 @@ DEFAULT_IMG_SIZE = 2048
 
 BACKEND_ENV_VAR = "CORRIDORKEY_BACKEND"
 VALID_BACKENDS = ("auto", "torch", "mlx")
+
+# Adaptive despeckle: skip CCL if fewer than this fraction of pixels are in transition zone
+DESPECKLE_BYPASS_THRESHOLD = 0.01
+DESPECKLE_TRANSITION_LOW = 0.05
+DESPECKLE_TRANSITION_HIGH = 0.95
 
 
 def resolve_backend(requested: str | None = None) -> str:
@@ -106,9 +113,7 @@ def _discover_checkpoint(ext: str) -> Path:
     return Path(matches[0])
 
 
-_checkerboard_cache: dict[tuple[int, int, int, float, float], np.ndarray] = {}
-
-
+@functools.lru_cache(maxsize=4)
 def _get_checkerboard(
     w: int,
     h: int,
@@ -119,10 +124,7 @@ def _get_checkerboard(
     """Return a cached checkerboard pattern, creating it only on first call per resolution."""
     from CorridorKeyModule.core import color_utils as cu
 
-    key = (w, h, checker_size, color1, color2)
-    if key not in _checkerboard_cache:
-        _checkerboard_cache[key] = cu.create_checkerboard(w, h, checker_size=checker_size, color1=color1, color2=color2)
-    return _checkerboard_cache[key]
+    return cu.create_checkerboard(w, h, checker_size=checker_size, color1=color1, color2=color2)
 
 
 def _wrap_mlx_output(
@@ -175,9 +177,9 @@ def _wrap_mlx_output(
     if auto_despeckle:
         # Adaptive bypass: if alpha is mostly binary (near 0 or 1), skip expensive CCL
         alpha_2d = alpha[:, :, 0] if alpha.ndim == 3 else alpha
-        mid_range = np.count_nonzero((alpha_2d > 0.05) & (alpha_2d < 0.95))
+        mid_range = np.count_nonzero((alpha_2d > DESPECKLE_TRANSITION_LOW) & (alpha_2d < DESPECKLE_TRANSITION_HIGH))
         mid_ratio = mid_range / alpha_2d.size
-        if mid_ratio < 0.01:
+        if mid_ratio < DESPECKLE_BYPASS_THRESHOLD:
             # Less than 1% of pixels in transition zone — matte is clean
             processed_alpha = alpha
         else:
@@ -225,34 +227,6 @@ class _MLXEngineAdapter:
         enabled_outputs=frozenset({"fg", "matte", "comp", "processed"}),
     ):
         """Delegate to MLX engine, then normalize output to Torch contract."""
-        import time
-
-        # Fast path: skip inference if mask is all-background or all-foreground
-        mask_2d = mask_linear[:, :, 0] if mask_linear.ndim == 3 else mask_linear
-        mask_min, mask_max = float(mask_2d.min()), float(mask_2d.max())
-
-        if mask_max < 0.01:
-            # Pure background — alpha=0, fg=black
-            h, w = image.shape[:2]
-            result = {
-                "alpha": np.zeros((h, w, 1), dtype=np.float32),
-                "fg": np.zeros((h, w, 3), dtype=np.float32),
-                "_timing": {"mlx_inference": 0.0, "postprocess": 0.0},
-            }
-            logger.debug("Frame skipped: mask is all-background")
-            return result
-
-        if mask_min > 0.99:
-            # Pure foreground — alpha=1, fg=input
-            h, w = image.shape[:2]
-            fg = image if image.dtype == np.float32 else image.astype(np.float32) / 255.0
-            result = {
-                "alpha": np.ones((h, w, 1), dtype=np.float32),
-                "fg": fg,
-                "_timing": {"mlx_inference": 0.0, "postprocess": 0.0},
-            }
-            logger.debug("Frame skipped: mask is all-foreground")
-            return result
 
         # MLX engine expects uint8 input — convert if float
         if image.dtype != np.uint8:
@@ -292,6 +266,8 @@ class _MLXEngineAdapter:
             t_post * 1000,
         )
 
+        # _timing is a side-channel for per-phase profiling — popped by the
+        # writer thread in clip_manager.py. Torch engine does not set this.
         result["_timing"] = {"mlx_inference": t_mlx, "postprocess": t_post}
         return result
 

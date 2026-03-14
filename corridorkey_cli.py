@@ -19,6 +19,7 @@ import os
 import shutil
 import sys
 import warnings
+from dataclasses import replace
 from typing import Annotated, Optional
 
 import typer
@@ -318,15 +319,7 @@ def run_inference_cmd(
             default_despeckle_size=despeckle_size,
             default_refiner=refiner,
         )
-        settings = InferenceSettings(
-            input_is_linear=settings.input_is_linear,
-            despill_strength=settings.despill_strength,
-            auto_despeckle=settings.auto_despeckle,
-            despeckle_size=settings.despeckle_size,
-            refiner_scale=settings.refiner_scale,
-            fast_exr=fast_exr,
-            enabled_outputs=enabled_outputs,
-        )
+        settings = replace(settings, fast_exr=fast_exr, enabled_outputs=enabled_outputs)
 
     with ProgressContext() as ctx_progress:
         run_inference(
