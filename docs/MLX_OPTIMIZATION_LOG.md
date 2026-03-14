@@ -10,8 +10,10 @@ Tracks all optimization experiments on the `feature/mlx-optimization` branch. Ea
 |---|---|---|
 | PyTorch (MPS) | 3:34 | — |
 | MLX (pre-optimization, 512px tiles) | 2:04 | ~3400 |
-| **MLX (all opts, 768px tiles, all outputs)** | **1:20** | **2948** |
-| **MLX (all opts, 768px tiles, matte+fg only)** | **~1:10** | **~2400** |
+| MLX (pipeline opts, 768px tiles, all outputs) | 1:20 | 2948 |
+| **MLX (all opts, all outputs)** | **1:15** | **2762** |
+| **MLX (all opts, matte+fg, fast-exr)** | **1:17** | **2118** |
+| **Speedup vs pre-opt** | | **1.6x** |
 
 ---
 
