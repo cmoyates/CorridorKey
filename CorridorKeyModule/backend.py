@@ -88,7 +88,7 @@ def _validate_mlx_available() -> None:
     except ImportError as err:
         raise RuntimeError(
             "MLX backend requested but corridorkey_mlx is not installed. "
-            "Install with: uv pip install corridorkey-mlx@git+https://github.com/cmoyates/corridorkey-mlx.git"
+            "Install with: uv pip install corridorkey-mlx@git+https://github.com/nikopueringer/corridorkey-mlx.git"
         ) from err
 
 
@@ -283,7 +283,7 @@ class _MLXEngineAdapter:
         return result
 
 
-DEFAULT_MLX_TILE_SIZE = 768
+DEFAULT_MLX_TILE_SIZE = None  # full-frame (tiling degrades quality)
 DEFAULT_MLX_TILE_OVERLAP = 128
 
 
